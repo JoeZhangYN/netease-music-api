@@ -1,0 +1,14 @@
+services:
+  netease-url:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/stats:/app/data
+      - ./data/downloads:/app/downloads
+      - ./cookie.txt:/app/cookie.txt:ro
+    restart: unless-stopped

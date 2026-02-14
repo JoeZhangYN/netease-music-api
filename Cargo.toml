@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "crates/kernel",
+    "crates/domain",
+    "crates/infra",
+    "crates/adapter",
+]
+
+[package]
+name = "netease-music-api"
+version = "2.0.0"
+edition = "2021"
+
+[[bin]]
+name = "netease-music-api"
+path = "src/main.rs"
+
+[dependencies]
+netease-kernel = { path = "crates/kernel" }
+netease-domain = { path = "crates/domain" }
+netease-infra = { path = "crates/infra" }
+netease-adapter = { path = "crates/adapter" }
+arc-swap = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+dashmap = "6"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+netease-infra = { path = "crates/infra" }
+netease-kernel = { path = "crates/kernel" }
+netease-domain = { path = "crates/domain" }
+proptest = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1

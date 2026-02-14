@@ -1,0 +1,12 @@
+disabled:
+  - video-downloader
+  - canvas-design
+  - docx
+  - xlsx
+  - pptx
+  - pdf
+  - research-writer
+  - calculator
+  - cuda
+  - image-enhancer
+  - mcp-builder
