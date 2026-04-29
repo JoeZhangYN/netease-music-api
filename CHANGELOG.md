@@ -142,6 +142,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-9 — handler dedup helper modules (additive).** Adds 3 helper
+  modules under `crates/adapter/src/web/helpers/` for handlers to
+  adopt incrementally. Existing handlers continue to work unchanged.
+  - `permit.rs` (~145 SLOC): `PermitGuard` RAII pairing semaphore
+    permit + stats counter. Pre-PR-9 the 5 handler-level
+    `acquire + stats.increment + ... + stats.decrement + drop`
+    sequences were panic-unsafe (counter leak on unwind between
+    increment and manual decrement). `Drop` impl makes it panic-safe.
+    `acquire(sem, stats, kind, timeout)` returns `AppError::ServiceBusy`
+    on timeout (HTTP 503). 2 inline tests using a `CountingStats`
+    test double.
+  - `temp_zip.rs` (~100 SLOC): `TempZipHandle` RAII handle for
+    temp-dir ZIP files with auto-cleanup-after-N-seconds via
+    `Drop`. Pre-PR-9 four handler sites duplicated
+    `tokio::spawn { sleep(60); remove_file }` blocks inline. New
+    `persist()` method skips cleanup when lifetime is owned
+    elsewhere (async download path). 2 inline tests verifying drop
+    schedules cleanup + persist disables it.
+  - `error_response.rs` (~90 SLOC): `AppErrorResponse(AppError)`
+    newtype with `From<AppError>` + `IntoResponse`. Lets handlers
+    return `Result<Json<APIResponse>, AppErrorResponse>` and
+    `?`-propagate. Pre-PR-9 17 handler files have ~30 inline
+    `&format!("xxx 失败: {}", e)` patterns. Migration is per-handler
+    follow-up. 2 inline tests verifying status code mapping for 8
+    AppError variants.
+  - Adapter crate gains `tempfile` dev-dep for the temp_zip tests.
+  - Total tests: 142 → 148 (+6 helper tests).
+  - Handler migration deferred — these helpers are additive scaffolding;
+    existing call sites continue to work, future PRs / v3 can adopt
+    them when handlers are otherwise touched.
+
 - **PR-8 — engine.rs 666 SLOC → 4 module split.** Mechanical
   reorganization (no behavior change). Pre-PR-8 the single
   `engine.rs` had file-size-gate exemption since PR-1; now organized:

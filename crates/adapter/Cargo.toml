@@ -6,6 +6,9 @@ edition = "2021"
 [lints]
 workspace = true
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 netease-kernel = { path = "../kernel" }
 netease-domain = { path = "../domain" }
