@@ -1,7 +1,7 @@
 // file-size-gate: exempt PR-1 (CI bootstrap); PR-8 拆 engine/{ctx,probe,single_stream,ranged,resume,retry}.rs 各 ≤150 SLOC
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -55,10 +55,27 @@ pub fn download_client() -> &'static Client {
 
 pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
+/// Compute the staging `.part` path for a given final destination.
+/// Uses `<final_name>.part` to make resumable downloads identifiable
+/// (PR-8 will read .part size for Range resume).
+pub fn part_path_for(file_path: &Path) -> PathBuf {
+    let mut name = file_path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(".part");
+    file_path.with_file_name(name)
+}
+
 /// Download a file from URL. Uses content_length_hint from API response
 /// instead of HEAD request to avoid consuming one-time download links.
 /// For large files (>5MB), probes Range support via the first chunk download
 /// so zero requests are wasted.
+///
+/// PR-3 hotfix: writes to `<file>.part` then atomic-renames to final path
+/// on success. On failure, the final-name file is never created (so the
+/// `cached_size == expected` check in callers can safely treat it as
+/// "no cache" instead of treating a truncated file as cached).
 pub async fn download_file_ranged(
     _client: &Client,
     url: &str,
@@ -73,13 +90,16 @@ pub async fn download_file_ranged(
         let _ = std::fs::create_dir_all(parent);
     }
 
+    // PR-3: stage to `.part` so that the final-name file only ever exists
+    // when fully written. Prevents truncated files being treated as cached.
+    let part_path = part_path_for(file_path);
     let content_length = content_length_hint;
 
     let result = if content_length > config.ranged_threshold {
         download_adaptive(
             dl,
             url,
-            file_path,
+            &part_path,
             content_length,
             on_progress.clone(),
             config,
@@ -89,7 +109,7 @@ pub async fn download_file_ranged(
         download_single_stream(
             dl,
             url,
-            file_path,
+            &part_path,
             content_length,
             on_progress,
             config.max_retries,
@@ -97,11 +117,29 @@ pub async fn download_file_ranged(
         .await
     };
 
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(file_path).await;
+    match result {
+        Ok(()) => {
+            // PR-3: atomic rename .part → final on success.
+            // If .part exists at expected size, this is the only atomic
+            // commit point — partial writes never carry the final name.
+            tokio::fs::rename(&part_path, file_path)
+                .await
+                .map_err(|e| {
+                    AppError::Download(format!(
+                        "Rename .part to final failed ({}): {}",
+                        file_path.display(),
+                        e
+                    ))
+                })?;
+            Ok(())
+        }
+        Err(e) => {
+            // PR-3: keep .part on failure so PR-8 (engine FSM) can resume
+            // from existing offset. The final-name file was never written,
+            // so callers' cached_size check stays correct.
+            Err(e)
+        }
     }
-
-    result
 }
 
 /// For large files: first Range GET doubles as probe and first chunk download.
@@ -221,6 +259,14 @@ async fn stream_response_to_file(
         .await
         .map_err(|e| AppError::Download(format!("Flush error: {}", e)))?;
 
+    // PR-3: see download_stream_once for rationale.
+    if total > 0 && downloaded != total {
+        return Err(AppError::Download(format!(
+            "Stream short read (probe-response path): got {} of {} bytes",
+            downloaded, total
+        )));
+    }
+
     Ok(())
 }
 
@@ -262,11 +308,35 @@ async fn download_remaining_and_assemble(
         let cl = content_length;
 
         handles.push(tokio::spawn(async move {
+            let expected_len = end - start + 1;
             for attempt in 0..max_retries {
                 match fetch_range(&client, &url, start, end).await {
                     Ok(data) => {
-                        let len = data.len() as u64;
-                        downloaded_total.fetch_add(len, std::sync::atomic::Ordering::Relaxed);
+                        let actual_len = data.len() as u64;
+                        // PR-3: chunk length validation. Short reads (server
+                        // returned fewer bytes than the Range requested) must
+                        // not silently produce a truncated assembled file.
+                        if actual_len != expected_len {
+                            warn!(
+                                "Range chunk short read: expected {} bytes [{}..{}], got {} (attempt {}/{})",
+                                expected_len, start, end, actual_len, attempt + 1, max_retries
+                            );
+                            if attempt < max_retries - 1 {
+                                let delay_idx = attempt.min(RETRY_DELAYS_MS.len() - 1);
+                                tokio::time::sleep(Duration::from_millis(
+                                    RETRY_DELAYS_MS[delay_idx],
+                                ))
+                                .await;
+                                continue;
+                            }
+                            return Err(AppError::Download(format!(
+                                "Range chunk short read after {} retries: \
+                                 expected {} bytes [{}..{}], got {}",
+                                max_retries, expected_len, start, end, actual_len
+                            )));
+                        }
+
+                        downloaded_total.fetch_add(actual_len, std::sync::atomic::Ordering::Relaxed);
                         if let Some(ref cb) = on_progress {
                             cb(
                                 downloaded_total.load(std::sync::atomic::Ordering::Relaxed),
@@ -318,6 +388,19 @@ async fn download_remaining_and_assemble(
             file.write_all(data)
                 .map_err(|e| AppError::Download(format!("Write error: {}", e)))?;
         }
+    }
+    drop(file);
+
+    // PR-3: post-assembly size verification — any chunk-write skip or first
+    // chunk short-read that earlier checks missed gets caught here.
+    let written = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    if written != content_length {
+        return Err(AppError::Download(format!(
+            "Assembled file size mismatch: wrote {} bytes, expected {} ({})",
+            written,
+            content_length,
+            file_path.display()
+        )));
     }
 
     Ok(())
@@ -395,6 +478,17 @@ async fn download_stream_once(
         .await
         .map_err(|e| AppError::Download(format!("Flush error: {}", e)))?;
 
+    // PR-3: stream short-read detection. Server can close mid-transfer; an
+    // unconditional Ok would leave a truncated file with the .part name,
+    // and the rename + cached_size check would later read it as cached
+    // unless we error here.
+    if total > 0 && downloaded != total {
+        return Err(AppError::Download(format!(
+            "Stream short read: got {} of {} bytes",
+            downloaded, total
+        )));
+    }
+
     Ok(())
 }
 
@@ -443,8 +537,11 @@ pub async fn download_music_file(
         let _ = std::fs::create_dir_all(parent);
     }
 
+    // PR-3: only treat as cached if size matches expected exactly.
+    // Previously `cached_size > 0` accepted any non-zero file as complete,
+    // which masked truncated files left by interrupted prior downloads.
     let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
-    if cached_size > 0 {
+    if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
         let cover_data = cover_cache.fetch(client, &music_info.pic_url).await;
         return Ok(DownloadResult::ok_with_cover(
             file_path,
@@ -452,6 +549,17 @@ pub async fn download_music_file(
             music_info,
             cover_data,
         ));
+    }
+    if cached_size > 0 && cached_size != music_info.file_size {
+        // Truncated/oversized leftover from a prior failed run — remove
+        // before re-downloading so the .part rename succeeds atomically.
+        warn!(
+            "Removing truncated cached file {} ({}B vs expected {}B)",
+            file_path.display(),
+            cached_size,
+            music_info.file_size
+        );
+        let _ = std::fs::remove_file(&file_path);
     }
 
     super::disk_guard::ensure_disk_space(
@@ -501,13 +609,23 @@ pub async fn download_music_with_metadata(
         let _ = std::fs::create_dir_all(parent);
     }
 
+    // PR-3: exact size match cache check (see download_music_file comment).
     let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
-    if cached_size > 0 {
+    if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
         return Ok(DownloadResult::ok(
             file_path,
             cached_size,
             music_info.clone(),
         ));
+    }
+    if cached_size > 0 && cached_size != music_info.file_size {
+        warn!(
+            "Removing truncated cached file {} ({}B vs expected {}B)",
+            file_path.display(),
+            cached_size,
+            music_info.file_size
+        );
+        let _ = std::fs::remove_file(&file_path);
     }
 
     super::disk_guard::ensure_disk_space(

@@ -17,6 +17,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/extract_id_fuzz.rs` (8 unit + 3 proptest) — pure numeric pass-through, whitespace trim, music.163.com URL id= extraction, malformed URL no-panic, fuzz any string never panics. Cross-trust-boundary input parser per common.md.
 - Total tests: 68 → 108 (+40), suites: 9 → 12. All passing.
 
+### Fixed
+- **PR-3 — Download "stuck at ~90%" hotfix.** 5-layer surgical patch addressing
+  the user-reported pain point ("downloads stall around 90%, retry 1-2× to
+  finish"). All fixes scoped to `crates/infra/src/download/engine.rs` +
+  `crates/adapter/src/web/handler/download_async.rs`; no type-system changes
+  (those land in PR-7/PR-8).
+  1. **`.part` staging + atomic rename** — engine now writes to `<file>.part`
+     and only renames to the final name on success. The final-name file
+     never carries partial bytes, so a failed run cannot leave a corrupted
+     file masquerading as a complete one. New `part_path_for(&Path) -> PathBuf`
+     helper exposed for tests + future PR-8 resume logic.
+  2. **`cached_size == file_size` cache check** — `download_music_file` and
+     `download_music_with_metadata` previously treated any non-zero file at
+     the final path as a cache hit. Now requires exact size match against
+     `music_info.file_size`; truncated leftovers are deleted before
+     re-downloading so the .part rename succeeds atomically.
+  3. **Range chunk length validation** — workers in
+     `download_remaining_and_assemble` now verify `data.len() == (end - start
+     + 1)` for every fetched chunk, retry on mismatch, and error after
+     `max_retries` instead of silently storing a short chunk.
+  4. **Total-size post-write verification** — both ranged-assembly and
+     single-stream paths now check the on-disk size matches
+     `content_length` (or the response's `Content-Length` header) before
+     returning Ok. Catches any short-read that earlier checks missed.
+  5. **Outer per-song timeout** — `single_download_worker` in
+     `download_async.rs` now wraps `download_music_with_metadata` in
+     `tokio::time::timeout(rc.download_timeout_per_song_secs, ...)`,
+     matching the existing `download_batch.rs` per-song timeout. The "task
+     hangs forever" mode is bounded; on timeout the task transitions to
+     Error with a user-friendly message indicating the .part file is
+     preserved for retry reuse.
+- New regression tests in `tests/engine_regression.rs` (6 tests) using
+  wiremock to verify each layer: positive control (single-stream success
+  renames part→final), short body returns error, .part name suffix
+  helpers, outer timeout fires within bounds when server hangs.
+- Total tests: 108 → 114 (+6).
+- **URL refresher closure (plan PR-3 item ②)**: deferred to PR-8 (engine
+  FSM `DownloadJob<R: UrlRefresher>` typestate). Out-of-engine effect is
+  achieved via outer timeout: a stalled task fails fast within seconds,
+  and the next user/UI retry naturally fetches a fresh URL via
+  `MusicApi::get_song_url`.
+
 ### Changed
 - `.gitignore` now also ignores `/logs/` (structured JSONL log directory introduced in PR-5) and `devnull` (occasional `2>devnull` artifact).
 

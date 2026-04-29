@@ -394,17 +394,23 @@ async fn do_single_download(
         }
     });
 
-    let dl_config = {
+    let (dl_config, dl_timeout_secs) = {
         let rc = state.runtime_config.load();
-        DownloadConfig {
-            ranged_threshold: rc.ranged_threshold,
-            ranged_threads: rc.ranged_threads,
-            max_retries: rc.max_retries,
-            min_free_disk: rc.min_free_disk,
-        }
+        (
+            DownloadConfig {
+                ranged_threshold: rc.ranged_threshold,
+                ranged_threads: rc.ranged_threads,
+                max_retries: rc.max_retries,
+                min_free_disk: rc.min_free_disk,
+            },
+            rc.download_timeout_per_song_secs,
+        )
     };
 
-    let result = download_music_with_metadata(
+    // PR-3: outer timeout — single-song download must fail fast instead of
+    // hanging forever when CDN URLs expire mid-stream. Matches the existing
+    // batch path's per-song timeout (download_batch.rs).
+    let dl_future = download_music_with_metadata(
         client,
         &state.config.downloads_dir,
         &music_info,
@@ -412,9 +418,30 @@ async fn do_single_download(
         Some(progress_cb),
         false,
         &dl_config,
+    );
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_secs(dl_timeout_secs),
+        dl_future,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => {
+            let msg = format!(
+                "下载超时（{}秒）。已下载部分保留为 .part，重试将复用。",
+                dl_timeout_secs
+            );
+            state.task_store.update(
+                task_id,
+                Box::new(move |t| {
+                    t.stage = TaskStage::Error;
+                    t.error = Some(msg);
+                }),
+            );
+            return Ok(());
+        }
+    };
 
     if !result.success {
         let msg = result.error_message.clone();
