@@ -17,6 +17,37 @@ impl fmt::time::FormatTime for LocalTimer {
     }
 }
 
+/// PR-5 — UTC ISO-8601 timer for JSON logs (chronologically comparable
+/// across machines). Reuses the `chrono` dep already in workspace.
+struct UtcIsoTimer;
+
+impl fmt::time::FormatTime for UtcIsoTimer {
+    fn format_time(&self, w: &mut fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(w, "{}", chrono::Utc::now().to_rfc3339())
+    }
+}
+
+/// PR-5 — JSON-formatted UTC line writer for the daily app.log.
+/// Independent of the human-readable stdout layer; always on so postmortem
+/// `jq` analysis works even when stdout pipes to /dev/null in production.
+fn build_json_file_layer<S>(
+    logs_dir: &std::path::Path,
+) -> (impl Layer<S>, tracing_appender::non_blocking::WorkerGuard)
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    let app_log = tracing_appender::rolling::daily(logs_dir, "app.jsonl");
+    let (nb, guard) = tracing_appender::non_blocking(app_log);
+    let layer = fmt::layer()
+        .json()
+        .with_timer(UtcIsoTimer)
+        .with_current_span(true)
+        .with_span_list(false)
+        .with_writer(nb)
+        .with_filter(EnvFilter::new("info"));
+    (layer, guard)
+}
+
 use netease_adapter::web::router::build_router;
 use netease_adapter::web::state::AppState;
 use netease_domain::port::cookie_store::CookieStore;
@@ -52,10 +83,19 @@ async fn main() {
         .with_ansi(false)
         .with_filter(EnvFilter::new("warn"));
 
+    // PR-5: structured JSON daily log for machine-readable postmortem.
+    // Always-on at info+ level alongside the human-readable layers above;
+    // PR-3 stall analysis / PR-8 metric baseline both depend on this.
+    let (json_layer, _json_guard) = build_json_file_layer(&config.logs_dir);
+
     tracing_subscriber::registry()
         .with(stdout_layer)
         .with(file_layer)
+        .with(json_layer)
         .init();
+    // Keep the non-blocking writer alive for the process lifetime.
+    // Leaking is acceptable here because main lives for the whole run.
+    std::mem::forget(_json_guard);
 
     let _ = std::fs::create_dir_all(&config.downloads_dir);
     let _ = std::fs::create_dir_all(&config.stats_dir);

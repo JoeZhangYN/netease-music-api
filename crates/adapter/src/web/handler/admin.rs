@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-5 (observability events添加); PR-9 handler 瘦身阶段拆 admin/{auth,config}.rs
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -8,11 +10,13 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Semaphore;
+use tracing::{info, warn};
 
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_infra::auth::password;
 use netease_infra::auth::token;
+use netease_kernel::observability::LogEvent;
 use netease_kernel::runtime_config::RuntimeConfig;
 
 #[allow(clippy::result_large_err)]
@@ -31,7 +35,14 @@ fn validate_session(
 
     match token::validate_token(token_str, &state.admin_secret) {
         Ok(()) => Ok(()),
-        Err(_) => Err(APIResponse::error("无效或已过期的管理令牌", 401)),
+        Err(_) => {
+            warn!(
+                event = %LogEvent::AdminTokenRejected,
+                token_len = token_str.len(),
+                "admin token validation failed"
+            );
+            Err(APIResponse::error("无效或已过期的管理令牌", 401))
+        }
     }
 }
 
@@ -77,6 +88,8 @@ pub async fn admin_setup(
 
     let t = token::issue_token(&state.admin_secret);
 
+    info!(event = %LogEvent::AdminSetupCompleted, "admin password initialized");
+
     APIResponse::success(json!({"token": t}), "管理密码设置成功")
 }
 
@@ -85,6 +98,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[tracing::instrument(skip(state, data), fields(event = %LogEvent::AdminLoginAttempt))]
 pub async fn admin_login(
     State(state): State<Arc<AppState>>,
     Json(data): Json<LoginRequest>,
@@ -96,10 +110,17 @@ pub async fn admin_login(
     };
 
     if !password::verify_password(&data.password, &hash) {
+        warn!(
+            event = %LogEvent::AdminLoginFailed,
+            password_len = data.password.len(),
+            "admin login wrong password"
+        );
         return APIResponse::error("密码错误", 401);
     }
 
     let t = token::issue_token(&state.admin_secret);
+
+    info!(event = %LogEvent::AdminLoginSucceeded, "admin login succeeded");
 
     APIResponse::success(json!({"token": t}), "登录成功")
 }

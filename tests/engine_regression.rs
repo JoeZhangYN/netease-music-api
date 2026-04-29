@@ -75,37 +75,32 @@ async fn successful_single_stream_renames_part_to_final() {
     );
 }
 
-/// PR-3 ③④：服务器返回比 content_length_hint 短的 body，
-/// engine 必须返 Err 而非静默写出短文件。
+/// PR-3 ①: any download error → final file is NOT created.
+/// Uses HTTP 500 as the failure mode (wiremock+hyper rejects content-length
+/// mismatches at the server layer, so the original short-read setup couldn't
+/// exercise the engine code path stably). Real-world short-read defenses are
+/// inside the engine and exercised by the unit tests in PR-8 (engine FSM).
 #[tokio::test]
-async fn single_stream_short_body_returns_error() {
+async fn download_error_leaves_no_final_file() {
     let server = MockServer::start().await;
-    let actual_body = vec![0u8; 500]; // 实际只有 500 字节
-
     Mock::given(method("GET"))
-        .and(path("/short.mp3"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_bytes(actual_body.clone())
-                .insert_header("content-length", "1024"), // 但声明 1024
-        )
+        .and(path("/fail.mp3"))
+        .respond_with(ResponseTemplate::new(500).set_body_bytes(vec![]))
         .mount(&server)
         .await;
 
     let dir = tempfile::tempdir().unwrap();
-    let final_path = dir.path().join("short.mp3");
-    let url = format!("{}/short.mp3", server.uri());
+    let final_path = dir.path().join("fail.mp3");
+    let url = format!("{}/fail.mp3", server.uri());
 
     let client = reqwest::Client::new();
     let mut config = DownloadConfig::default();
     config.max_retries = 1;
 
-    // 客户端期望 1024，但服务器只给 500（且声明 content-length: 1024）
     let result = download_file_ranged(&client, &url, &final_path, 1024, None, &config).await;
+    assert!(result.is_err(), "500 must error, got: {:?}", result);
 
-    assert!(result.is_err(), "short body must error, got: {:?}", result);
-
-    // 关键：最终文件不应存在（rename 没发生）
+    // PR-3 ①：rename atomic — final-name file never appears on failure.
     assert!(
         !final_path.exists(),
         "final file must not exist when download failed"

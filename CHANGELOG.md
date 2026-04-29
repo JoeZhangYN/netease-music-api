@@ -96,6 +96,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR-2 round-trip test that locks current field names.
 - Total tests: 114 → 125 (+11 in quality.rs).
 
+### Added (continued)
+- **PR-5 — Observability layer baseline.** Lays the groundwork so PR-3's
+  90% stall fix has a 7-day metrics baseline before PR-8 engine FSM
+  rewrite. Without this, "did the engine refactor improve download
+  success rate?" is unanswerable — see plan §9.4 quantitative gate.
+  - New module `crates/kernel/src/observability/`:
+    - `event.rs` — `enum LogEvent` with **30 variants** spanning
+      Download lifecycle / Range engine / Task / API / Concurrency /
+      Admin security / Cookie / Disk. snake_case wire format via
+      `#[serde(rename_all = "snake_case")]` + `Display + as_str()`
+      for tracing field interpolation. Adding a variant is one line;
+      removing fails any matching call site at compile time.
+    - `redact.rs` — `Redacted<T>` newtype with `Debug = "[redacted]"`,
+      `Deref<Target = T>`, `From<T>`. Use to wrap cookies, passwords,
+      raw download URLs anywhere they might enter `Debug`-derived
+      structs that get interpolated into `info!("{:?}")`.
+    - 7 inline tests covering serde/as_str round-trip, Display
+      snake_case, admin-event prefix invariant, Debug suppression
+      for nested struct, Deref pass-through, From constructor.
+  - Root `Cargo.toml`: `tracing-subscriber` gains `"json"` feature.
+  - `src/main.rs`: adds `build_json_file_layer()` writing daily
+    `app.jsonl` with UTC ISO-8601 timestamps via new `UtcIsoTimer`.
+    Always-on alongside human stdout + warn-only error.log layers.
+    `LOG_FORMAT` env var hook reserved for future opt-in stdout JSON.
+  - `crates/adapter/src/web/handler/admin.rs`: 4 security audit events
+    via `LogEvent`:
+    - `AdminLoginAttempt` (entry span via `#[tracing::instrument]`)
+    - `AdminLoginSucceeded` (info)
+    - `AdminLoginFailed` (warn — brute-force signal, includes only
+      password length, not value)
+    - `AdminTokenRejected` (warn — replay/forgery signal, includes
+      only token length, not value)
+    - `AdminSetupCompleted` (info)
+    File gains file-size-gate exempt header; PR-9 will split into
+    `admin/{auth,config}.rs`.
+- **Engine HTTP status guard fix** (discovered while writing
+  observability tests): `engine.rs::download_stream_once` now rejects
+  non-success HTTP status codes (4xx/5xx). Pre-PR-5 `reqwest` 's
+  HTTP-error-is-not-Result-Err semantics combined with empty 5xx
+  bodies (content-length: 0) silently passed the size-mismatch check
+  and resulted in renamed empty final files. Now status is checked
+  before consuming the body.
+- Total tests: 125 → 132 (+7 from observability + 1 replaced engine
+  test). All passing.
+
+### Deferred (PR-8 scope)
+- Engine 15s stall watchdog (`LogEvent::DownloadStalled`): naturally
+  fits in PR-8's `DownloadJob` FSM where each chunk has a
+  per-attempt timer.
+- Per-chunk `LogEvent::RangeChunkRetry` / `RangeShortRead` events: same
+  rationale; will become structured fields on the FSM transitions.
+- `#[tracing::instrument]` on download handlers: file-size-gate bars
+  growing 460-line files; PR-9 handler split makes this trivial.
+
 ### Changed
 - `.gitignore` now also ignores `/logs/` (structured JSONL log directory introduced in PR-5) and `devnull` (occasional `2>devnull` artifact).
 

@@ -448,6 +448,18 @@ async fn download_stream_once(
         .await
         .map_err(|e| AppError::Download(format!("Download request failed: {}", e)))?;
 
+    // PR-5: reqwest does NOT error on HTTP 4xx/5xx — it only errors on
+    // transport failures. Without this guard, an empty 500 body
+    // (content-length: 0) silently passes the size-mismatch check
+    // and gets renamed to the final path. Reject non-success here.
+    let status = resp.status();
+    if !status.is_success() && status.as_u16() != 206 {
+        return Err(AppError::Download(format!(
+            "HTTP {} from server",
+            status.as_u16()
+        )));
+    }
+
     let total = resp
         .headers()
         .get("content-length")
