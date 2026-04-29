@@ -14,6 +14,7 @@ use tracing::{info, warn};
 
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
+use netease_domain::model::quality::Quality;
 use netease_infra::auth::password;
 use netease_infra::auth::token;
 use netease_kernel::observability::LogEvent;
@@ -198,6 +199,66 @@ pub async fn admin_put_config(
     );
 
     APIResponse::success(json!({}), "配置已保存并生效")
+}
+
+/// PR-10 — public schema of `RuntimeConfig` numeric bounds.
+/// Returned by `GET /admin/config/schema` so the frontend can render
+/// sliders dynamically instead of duplicating min/max/default values
+/// across HTML, JS validator, and Rust validate(). Source of truth
+/// for the bounds is `RuntimeConfig::validate()` itself; this endpoint
+/// surfaces them for clients.
+///
+/// Pre-PR-10 the slider min/max/value were triplicated:
+///   - HTML attrs (templates/index.html slider section)
+///   - JS validator (validateAdminConfig)
+///   - Rust validate() (kernel/runtime_config.rs)
+///
+/// Drift was already detected (JS dropped 3 upper bounds; cover_cache
+/// TTL unit mismatch). Frontend migration to consume this endpoint
+/// is a separate v3 follow-up; the endpoint is non-breaking and
+/// available for use immediately.
+pub async fn admin_get_config_schema(
+    State(_state): State<Arc<AppState>>,
+) -> (StatusCode, Json<APIResponse>) {
+    let schema = json!({
+        "fields": [
+            { "name": "parse_concurrency",                "min": 1,           "max": 50,          "default": 5,             "unit": null     },
+            { "name": "download_concurrency",             "min": 1,           "max": 20,          "default": 2,             "unit": null     },
+            { "name": "batch_concurrency",                "min": 1,           "max": 5,           "default": 1,             "unit": null     },
+            { "name": "ranged_threshold",                 "min": 1048576,     "max": null,        "default": 5242880,       "unit": "bytes"  },
+            { "name": "ranged_threads",                   "min": 1,           "max": 32,          "default": 8,             "unit": null     },
+            { "name": "max_retries",                      "min": 1,           "max": 20,          "default": 5,             "unit": null     },
+            { "name": "download_cleanup_interval_secs",   "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
+            { "name": "download_cleanup_max_age_secs",    "min": 60,          "max": null,        "default": 43200,         "unit": "secs"   },
+            { "name": "task_ttl_secs",                    "min": 60,          "max": null,        "default": 1800,          "unit": "secs"   },
+            { "name": "zip_max_age_secs",                 "min": 60,          "max": null,        "default": 3600,          "unit": "secs"   },
+            { "name": "task_cleanup_interval_secs",       "min": 5,           "max": null,        "default": 60,            "unit": "secs"   },
+            { "name": "cover_cache_ttl_secs",             "min": 60,          "max": null,        "default": 600,           "unit": "secs"   },
+            { "name": "cover_cache_max_size",             "min": 1,           "max": 500,         "default": 50,            "unit": null     },
+            { "name": "batch_max_songs",                  "min": 1,           "max": 500,         "default": 100,           "unit": null     },
+            { "name": "min_free_disk",                    "min": 104857600,   "max": null,        "default": 524288000,     "unit": "bytes"  },
+            { "name": "download_timeout_per_song_secs",   "min": 10,          "max": null,        "default": 300,           "unit": "secs"   }
+        ]
+    });
+    APIResponse::success(schema, "ok")
+}
+
+/// PR-10 — public list of supported audio qualities, derived from the
+/// `Quality` enum (PR-4 SOT). Replaces the hand-listed array in
+/// `info.rs` (which had drifted to 7-of-8 missing `dolby` until PR-4).
+/// Frontend can fetch this on startup to populate `<select>` options
+/// without hand-coding them in HTML.
+pub async fn admin_get_qualities() -> (StatusCode, Json<APIResponse>) {
+    let qualities: Vec<serde_json::Value> = Quality::ALL
+        .iter()
+        .map(|q| {
+            json!({
+                "value": q.wire_str(),
+                "display_name": q.display_name_zh(),
+            })
+        })
+        .collect();
+    APIResponse::success(json!({ "qualities": qualities }), "ok")
 }
 
 fn resize_semaphore(sem: &Semaphore, cap: &AtomicUsize, new_cap: usize) {

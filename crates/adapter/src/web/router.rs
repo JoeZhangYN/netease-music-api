@@ -106,5 +106,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/admin/config",
             get(handler::admin::admin_get_config).put(handler::admin::admin_put_config),
         )
+        // PR-10: schema endpoints — let frontend fetch field bounds /
+        // quality variants instead of hand-coding them in HTML.
+        .route(
+            "/admin/config/schema",
+            get(handler::admin::admin_get_config_schema),
+        )
+        .route("/admin/qualities", get(handler::admin::admin_get_qualities))
         .with_state(state)
 }

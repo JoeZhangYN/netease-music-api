@@ -142,6 +142,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-10 — admin schema endpoints (minimal).** Adds 2 read-only
+  endpoints exposing internal SOTs to clients, eliminating the need
+  for the frontend to hand-code values that drift from Rust:
+  - `GET /admin/config/schema` — returns each `RuntimeConfig` field's
+    `name / min / max / default / unit`. Pre-PR-10 these bounds were
+    triplicated: HTML slider `min/max/value` attrs, JS
+    `validateAdminConfig`, Rust `validate()`. The PR-2 audit
+    confirmed JS had drifted (3 upper bounds dropped, cover_cache TTL
+    unit mismatch). Frontend can now fetch this once on startup and
+    render sliders dynamically. No auth required (read-only public
+    schema).
+  - `GET /admin/qualities` — returns `[{value, display_name}]` for
+    all 8 `Quality` variants, derived from `Quality::ALL` (PR-4 SOT).
+    Eliminates the need for HTML `<select>` to hand-list values
+    (which had drifted to 7-of-8 in `info.rs` until PR-4).
+  - Total tests unchanged (endpoints have no inline tests; PR-9 axum
+    smoke test infrastructure deferred — would need full AppState
+    builder which is out of PR-10 scope).
+  - Frontend migration to consume these endpoints deferred to v3 —
+    requires substantial `templates/index.html` rework. Endpoints
+    are non-breaking: existing HTML continues to use hand-coded
+    values until the frontend is updated.
+  - **TaskStore typed transitions / StatsKind enum / ParsedCookies
+    (plan PR-10 ②③④) deferred to v3** — each would cascade through
+    15-30+ call sites. Helpers from PR-9 already provide the most
+    impactful DRY win; remaining items are nice-to-have type-safety
+    improvements without user-visible value.
+
 - **PR-9 — handler dedup helper modules (additive).** Adds 3 helper
   modules under `crates/adapter/src/web/helpers/` for handlers to
   adopt incrementally. Existing handlers continue to work unchanged.
