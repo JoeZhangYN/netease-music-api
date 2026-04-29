@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 
 use crate::model::quality::quality_display_name;
-use crate::model::song::{extract_artists, SongUrlData};
+use crate::model::song::extract_artists;
 use crate::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
 use netease_kernel::util::format::format_file_size;
@@ -14,16 +14,12 @@ pub async fn handle_url(
     level: &str,
     cookies: &HashMap<String, String>,
 ) -> Result<Value, AppError> {
-    let result = api.get_song_url(music_id, level, cookies).await?;
-    let song_data = result
-        .pointer("/data/0")
-        .ok_or_else(|| AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into()))?;
-
-    let url_data = SongUrlData::from_api_response(song_data)
-        .ok_or_else(|| AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into()))?;
+    // PR-6: api.get_song_url now returns typed SongUrlData; pointer parsing
+    // moved into NeteaseApi impl. Wire format unchanged below.
+    let url_data = api.get_song_url(music_id, level, cookies).await?;
 
     Ok(json!({
-        "id": song_data.get("id"),
+        "id": url_data.id,
         "url": url_data.url,
         "level": url_data.level,
         "quality_name": quality_display_name(&url_data.level),
@@ -76,16 +72,17 @@ pub async fn handle_json(
         "tlyric": lyric_info.as_ref().and_then(|v| v.pointer("/tlyric/lyric")).and_then(|v| v.as_str()).unwrap_or(""),
     });
 
-    if let Some(url_data) = url_info.as_ref().and_then(|v| v.pointer("/data/0")) {
-        let size = url_data.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-        let actual_level = url_data
-            .get("level")
-            .and_then(|v| v.as_str())
-            .unwrap_or(level);
-        response_data["url"] = json!(url_data.get("url").and_then(|v| v.as_str()).unwrap_or(""));
-        response_data["size"] = json!(format_file_size(size));
-        response_data["size_raw"] = json!(size);
-        response_data["type"] = json!(url_data.get("type").and_then(|v| v.as_str()).unwrap_or(""));
+    // PR-6: typed url_data, no more .pointer("/data/0")
+    if let Some(url_data) = url_info.as_ref() {
+        let actual_level = if url_data.level.is_empty() {
+            level
+        } else {
+            &url_data.level
+        };
+        response_data["url"] = json!(url_data.url);
+        response_data["size"] = json!(format_file_size(url_data.size));
+        response_data["size_raw"] = json!(url_data.size);
+        response_data["type"] = json!(url_data.file_type);
         response_data["level"] = json!(actual_level);
     } else {
         response_data["url"] = json!("");

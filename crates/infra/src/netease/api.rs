@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-6 — typed parsers progressively migrating; PR-6b will split into netease/parse/{song,search,playlist,album,lyric}.rs
+
 use std::collections::HashMap;
 
 use rand::Rng;
@@ -8,6 +10,7 @@ use super::client::HttpClient;
 use super::crypto::encrypt_params;
 use super::pic::get_pic_url;
 use super::types::*;
+use netease_domain::model::song::SongUrlData;
 use netease_domain::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
 
@@ -28,7 +31,7 @@ impl MusicApi for NeteaseApi {
         song_id: &str,
         quality: &str,
         cookies: &HashMap<String, String>,
-    ) -> Result<Value, AppError> {
+    ) -> Result<SongUrlData, AppError> {
         let mut config = default_config();
         let request_id = rand::thread_rng().gen_range(20000000u32..30000000);
         config.insert("requestId".into(), Value::String(request_id.to_string()));
@@ -64,7 +67,12 @@ impl MusicApi for NeteaseApi {
             return Err(AppError::Api(format!("Get song URL failed: {}", msg)));
         }
 
-        Ok(result)
+        // PR-6: parse to typed struct here; callers no longer pointer.
+        let song_data = result.pointer("/data/0").ok_or_else(|| {
+            AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into())
+        })?;
+        SongUrlData::from_api_response(song_data)
+            .ok_or_else(|| AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into()))
     }
 
     async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {

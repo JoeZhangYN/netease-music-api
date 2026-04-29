@@ -72,24 +72,13 @@ pub async fn download_with_metadata(
         }
     };
 
-    let download_url = url_result
-        .pointer("/data/0/url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    // PR-6: get_song_url returns typed SongUrlData; no more .pointer()
+    let download_url = url_result.url.clone();
     if download_url.is_empty() {
         return APIResponse::error("无可用的下载链接", 404).into_response();
     }
-
-    let file_type = url_result
-        .pointer("/data/0/type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("mp3")
-        .to_string();
-    let file_size = url_result
-        .pointer("/data/0/size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let file_type = url_result.file_type.clone();
+    let file_size = url_result.size;
 
     let music_info = MusicInfo {
         id: music_id.parse().unwrap_or(0),

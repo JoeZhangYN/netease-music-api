@@ -297,17 +297,13 @@ async fn do_single_download(
     let api = state.music_api.as_ref();
 
     let music_info = if let Some(mut meta) = metadata {
-        let url_result = api
+        // PR-6: get_song_url returns typed SongUrlData; no more .pointer()
+        let url_data = api
             .get_song_url(music_id, quality, &cookies)
             .await
             .map_err(|e| e.to_string())?;
 
-        let download_url = url_result
-            .pointer("/data/0/url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if download_url.is_empty() {
+        if url_data.url.is_empty() {
             state.task_store.update(
                 task_id,
                 Box::new(|t| {
@@ -318,19 +314,9 @@ async fn do_single_download(
             return Ok(());
         }
 
-        let file_type = url_result
-            .pointer("/data/0/type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mp3")
-            .to_string();
-        let file_size = url_result
-            .pointer("/data/0/size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        meta.download_url = DownloadUrl::new(download_url);
-        meta.file_type = file_type;
-        meta.file_size = file_size;
+        meta.download_url = DownloadUrl::new(url_data.url);
+        meta.file_type = url_data.file_type;
+        meta.file_size = url_data.size;
         meta
     } else {
         state.task_store.update(

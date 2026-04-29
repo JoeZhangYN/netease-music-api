@@ -17,22 +17,8 @@ pub async fn get_music_info(
         api.get_lyric(music_id, cookies),
     );
 
-    let url_result = url_result?;
-    let song_data = url_result
-        .pointer("/data/0")
-        .ok_or_else(|| AppError::Download(format!("No download data for ID {}", music_id)))?;
-
-    let download_url = song_data
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    if download_url.is_empty() {
-        return Err(AppError::Download(format!(
-            "No available download URL for ID {}",
-            music_id
-        )));
-    }
+    // PR-6: typed SongUrlData
+    let url_data = url_result?;
 
     let detail_result = detail_result?;
     let song_detail = detail_result
@@ -62,13 +48,9 @@ pub async fn get_music_info(
             .to_string(),
         duration: song_detail.get("dt").and_then(|v| v.as_i64()).unwrap_or(0) / 1000,
         track_number: song_detail.get("no").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-        download_url: DownloadUrl::new(download_url),
-        file_type: song_data
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("mp3")
-            .to_lowercase(),
-        file_size: song_data.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+        download_url: DownloadUrl::new(url_data.url),
+        file_type: url_data.file_type,
+        file_size: url_data.size,
         quality: quality.to_string(),
         lyric: lyric_result
             .as_ref()

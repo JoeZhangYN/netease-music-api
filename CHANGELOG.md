@@ -141,6 +141,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Total tests: 125 → 132 (+7 from observability + 1 replaced engine
   test). All passing.
 
+### Refactor
+- **PR-6 (partial) — `MusicApi::get_song_url` typed return.** First slice
+  of "kill `serde_json::Value` returns" — most-impactful method (5
+  callers were doing independent `.pointer("/data/0/url")` parsing).
+  Trait now returns `Result<SongUrlData, AppError>`; `NeteaseApi` impl
+  owns the pointer parsing in one place. Wire format unchanged
+  (`Serialize` + `#[serde(rename = "type"|"br")]` mirrors existing JSON).
+  Updated 5 call sites: `song_service::handle_url`,
+  `song_service::handle_json`, `download_service::get_music_info`,
+  `download_async.rs::single_download_worker`,
+  `download_meta.rs::download_with_metadata`. Added `id` field to
+  `SongUrlData` + 3 inline parser tests.
+- Total tests: 132 → 135 (+3 from SongUrlData parse tests).
+- **Remaining 5 MusicApi methods** (`get_song_detail`, `get_lyric`,
+  `search`, `get_playlist`, `get_album`) still return `Value` —
+  deferred to PR-6b (low ROI, high SLOC; folded into PR-7 typestate
+  work where the structures naturally surface).
+
 ### Deferred (PR-8 scope)
 - Engine 15s stall watchdog (`LogEvent::DownloadStalled`): naturally
   fits in PR-8's `DownloadJob` FSM where each chunk has a

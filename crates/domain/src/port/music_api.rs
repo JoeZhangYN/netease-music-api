@@ -2,16 +2,19 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use crate::model::song::SongUrlData;
 use netease_kernel::error::AppError;
 
 #[async_trait::async_trait]
 pub trait MusicApi: Send + Sync {
+    /// PR-6: returns typed `SongUrlData`. Pointer parsing lives in the
+    /// `NeteaseApi` impl; consumers access fields directly.
     async fn get_song_url(
         &self,
         song_id: &str,
         quality: &str,
         cookies: &HashMap<String, String>,
-    ) -> Result<Value, AppError>;
+    ) -> Result<SongUrlData, AppError>;
 
     async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError>;
 
