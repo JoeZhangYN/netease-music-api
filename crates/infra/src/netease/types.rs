@@ -15,9 +15,15 @@ pub const APP_VERSION: &str = "8.9.75";
 pub fn default_config() -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("os".into(), serde_json::Value::String("pc".into()));
-    m.insert("appver".into(), serde_json::Value::String(APP_VERSION.into()));
+    m.insert(
+        "appver".into(),
+        serde_json::Value::String(APP_VERSION.into()),
+    );
     m.insert("osver".into(), serde_json::Value::String(String::new()));
-    m.insert("deviceId".into(), serde_json::Value::String("pyncm!".into()));
+    m.insert(
+        "deviceId".into(),
+        serde_json::Value::String("pyncm!".into()),
+    );
     m
 }
 

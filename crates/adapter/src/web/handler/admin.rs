@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -16,7 +16,10 @@ use netease_infra::auth::token;
 use netease_kernel::runtime_config::RuntimeConfig;
 
 #[allow(clippy::result_large_err)]
-fn validate_session(headers: &HeaderMap, state: &AppState) -> Result<(), (StatusCode, Json<APIResponse>)> {
+fn validate_session(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<(), (StatusCode, Json<APIResponse>)> {
     let token_str = headers
         .get("X-Admin-Token")
         .and_then(|v| v.to_str().ok())
@@ -32,9 +35,7 @@ fn validate_session(headers: &HeaderMap, state: &AppState) -> Result<(), (Status
     }
 }
 
-pub async fn admin_status(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
+pub async fn admin_status(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let has_password = state.admin_password_hash.read().unwrap().is_some();
     APIResponse::success(
         json!({
@@ -186,7 +187,9 @@ fn resize_semaphore(sem: &Semaphore, cap: &AtomicUsize, new_cap: usize) {
         let to_remove = old_cap - new_cap;
         for _ in 0..to_remove {
             match sem.try_acquire() {
-                Ok(p) => { p.forget(); }
+                Ok(p) => {
+                    p.forget();
+                }
                 Err(_) => break,
             }
         }

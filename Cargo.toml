@@ -6,6 +6,15 @@ members = [
     "crates/adapter",
 ]
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+
 [package]
 name = "netease-music-api"
 version = "2.0.0"

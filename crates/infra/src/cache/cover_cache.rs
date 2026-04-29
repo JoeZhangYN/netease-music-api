@@ -53,11 +53,7 @@ impl CoverCache {
             if delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
-            match dl
-                .get(pic_url)
-                .send()
-                .await
-            {
+            match dl.get(pic_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     if let Ok(data) = resp.bytes().await {
                         let data = data.to_vec();

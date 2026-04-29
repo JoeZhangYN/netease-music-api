@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use reqwest::Client;
-use tokio::sync::{Semaphore, broadcast};
+use tokio::sync::{broadcast, Semaphore};
 
 use netease_domain::port::cookie_store::CookieStore;
 use netease_domain::port::music_api::MusicApi;

@@ -1,6 +1,8 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); main.rs 装配点暂保留，PR-5 抽 observability::init / PR-11 抽 in_flight 集后会回到阈值内
+
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use tower_http::cors::{Any, CorsLayer};
@@ -15,17 +17,17 @@ impl fmt::time::FormatTime for LocalTimer {
     }
 }
 
-use netease_domain::port::cookie_store::CookieStore;
-use netease_kernel::config::AppConfig;
-use netease_kernel::runtime_config::RuntimeConfig;
-use netease_adapter::web::state::AppState;
 use netease_adapter::web::router::build_router;
+use netease_adapter::web::state::AppState;
+use netease_domain::port::cookie_store::CookieStore;
+use netease_infra::auth::{password, token};
+use netease_infra::cache::cover_cache::CoverCache;
 use netease_infra::netease::api::NeteaseApi;
 use netease_infra::persistence::cookie_file::FileCookieStore;
 use netease_infra::persistence::stats_file::FileStatsStore;
 use netease_infra::persistence::task_memory::InMemoryTaskStore;
-use netease_infra::cache::cover_cache::CoverCache;
-use netease_infra::auth::{password, token};
+use netease_kernel::config::AppConfig;
+use netease_kernel::runtime_config::RuntimeConfig;
 
 #[tokio::main]
 async fn main() {
@@ -37,8 +39,11 @@ async fn main() {
         .with_timer(LocalTimer)
         .with_target(false)
         .with_ansi(!cfg!(windows))
-        .with_filter(EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(&config.log_level)));
+        .with_filter(
+            EnvFilter::try_from_default_env()
+                .ok()
+                .unwrap_or_else(|| EnvFilter::new(&config.log_level)),
+        );
 
     let error_file = tracing_appender::rolling::daily(&config.logs_dir, "error.log");
     let file_layer = fmt::layer()
@@ -59,17 +64,20 @@ async fn main() {
     let rc = RuntimeConfig::load_or_default(&config.runtime_config_file);
 
     // Load admin password: file → env var → None
-    let admin_hash = password::load_password_hash(&config.admin_hash_file)
-        .or_else(|| {
-            config.admin_password.as_ref().and_then(|pw| {
-                password::hash_password(pw).ok().inspect(|hash| {
-                    let _ = password::save_password_hash(&config.admin_hash_file, hash);
-                })
+    let admin_hash = password::load_password_hash(&config.admin_hash_file).or_else(|| {
+        config.admin_password.as_ref().and_then(|pw| {
+            password::hash_password(pw).ok().inspect(|hash| {
+                let _ = password::save_password_hash(&config.admin_hash_file, hash);
             })
-        });
+        })
+    });
 
     let admin_secret = token::load_or_create_secret(&config.admin_secret_file);
-    let admin_status_msg = if admin_hash.is_some() { "configured" } else { "not set (setup via admin panel)" };
+    let admin_status_msg = if admin_hash.is_some() {
+        "configured"
+    } else {
+        "not set (setup via admin panel)"
+    };
 
     // Build HTTP client
     let http_client = reqwest::Client::builder()
@@ -90,7 +98,10 @@ async fn main() {
         rc.task_cleanup_interval_secs,
     ));
     let music_api = Arc::new(NeteaseApi::new(http_client.clone()));
-    let cover_cache = Arc::new(CoverCache::new(rc.cover_cache_ttl_secs, rc.cover_cache_max_size));
+    let cover_cache = Arc::new(CoverCache::new(
+        rc.cover_cache_ttl_secs,
+        rc.cover_cache_max_size,
+    ));
 
     // Start background loops
     stats.start_flush_loop();
@@ -132,12 +143,18 @@ async fn main() {
         tokio::spawn(async move {
             loop {
                 let rc = (**state_ref.runtime_config.load()).clone();
-                tokio::time::sleep(std::time::Duration::from_secs(rc.download_cleanup_interval_secs)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    rc.download_cleanup_interval_secs,
+                ))
+                .await;
                 let cap = state_ref.download_semaphore_cap.load(Ordering::Relaxed);
                 if state_ref.download_semaphore.available_permits() < cap {
                     continue;
                 }
-                cleanup_old_files(&state_ref.config.downloads_dir, rc.download_cleanup_max_age_secs);
+                cleanup_old_files(
+                    &state_ref.config.downloads_dir,
+                    rc.download_cleanup_max_age_secs,
+                );
             }
         });
     }
@@ -156,13 +173,17 @@ async fn main() {
     );
 
     let cookie_abs = std::fs::canonicalize(&config.cookie_file)
-        .unwrap_or_else(|_| config.cookie_file.clone());
+        .ok()
+        .unwrap_or_else(|| config.cookie_file.clone());
     let downloads_abs = std::fs::canonicalize(&config.downloads_dir)
-        .unwrap_or_else(|_| config.downloads_dir.clone());
+        .ok()
+        .unwrap_or_else(|| config.downloads_dir.clone());
     let stats_abs = std::fs::canonicalize(&config.stats_dir)
-        .unwrap_or_else(|_| config.stats_dir.clone());
+        .ok()
+        .unwrap_or_else(|| config.stats_dir.clone());
     let logs_abs = std::fs::canonicalize(&config.logs_dir)
-        .unwrap_or_else(|_| config.logs_dir.clone());
+        .ok()
+        .unwrap_or_else(|| config.logs_dir.clone());
 
     println!();
     println!("{}", "=".repeat(60));
@@ -202,9 +223,7 @@ async fn main() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server failed");
+    axum::serve(listener, app).await.expect("Server failed");
 }
 
 fn cleanup_old_files(dir: &std::path::Path, max_age_secs: u64) {

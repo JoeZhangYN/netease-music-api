@@ -5,6 +5,7 @@
 cookie.txt
 /downloads/
 /data/
+/logs/
 
 # IDE
 .idea/
@@ -19,3 +20,8 @@ Thumbs.db
 # Environment overrides
 .env.local
 nul
+devnull
+
+# Tool / hook artifacts
+.claude/.hooks-log/
+.claude/Cargo-additions.toml.example

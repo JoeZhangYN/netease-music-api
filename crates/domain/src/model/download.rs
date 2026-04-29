@@ -1,3 +1,5 @@
+// test-gate: exempt PR-1 (CI bootstrap) scope; download 模型测试已在 tests/contract_download_link.rs + tests/task_state_machine.rs 覆盖；PR-7 重构为 DownloadOutcome enum 时再统一移除豁免
+
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,7 +29,12 @@ impl DownloadResult {
         }
     }
 
-    pub fn ok_with_cover(path: PathBuf, size: u64, info: MusicInfo, cover: Option<Vec<u8>>) -> Self {
+    pub fn ok_with_cover(
+        path: PathBuf,
+        size: u64,
+        info: MusicInfo,
+        cover: Option<Vec<u8>>,
+    ) -> Self {
         Self {
             success: true,
             file_path: Some(path),
@@ -97,8 +104,8 @@ pub struct TaskInfo {
     pub failed: Option<u32>,
 }
 
-impl TaskInfo {
-    pub fn new() -> Self {
+impl Default for TaskInfo {
+    fn default() -> Self {
         Self {
             stage: TaskStage::Starting,
             percent: 0,
@@ -112,6 +119,12 @@ impl TaskInfo {
             completed: None,
             failed: None,
         }
+    }
+}
+
+impl TaskInfo {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

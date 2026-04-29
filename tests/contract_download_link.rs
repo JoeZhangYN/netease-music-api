@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use netease_domain::model::download::{DownloadResult, TaskInfo, TaskStage};
-use netease_domain::model::music_info::{build_file_path, determine_file_extension, DownloadUrl, MusicInfo};
+use netease_domain::model::music_info::{
+    build_file_path, determine_file_extension, DownloadUrl, MusicInfo,
+};
 use netease_domain::model::quality::{VALID_QUALITIES, VALID_TYPES};
 
 fn sample_music_info() -> MusicInfo {
@@ -58,7 +60,10 @@ fn c2_build_file_path_does_not_consume_url() {
     assert!(path.to_string_lossy().ends_with(".flac"));
 
     // URL is still accessible
-    assert_eq!(info.download_url.as_str(), "https://m10.music.126.net/xxx.flac");
+    assert_eq!(
+        info.download_url.as_str(),
+        "https://m10.music.126.net/xxx.flac"
+    );
 }
 
 #[test]
@@ -166,7 +171,9 @@ fn download_result_fail_invariants() {
 
 #[test]
 fn valid_qualities_contains_expected_values() {
-    let expected = ["standard", "exhigh", "lossless", "hires", "sky", "jyeffect", "jymaster", "dolby"];
+    let expected = [
+        "standard", "exhigh", "lossless", "hires", "sky", "jyeffect", "jymaster", "dolby",
+    ];
     assert_eq!(VALID_QUALITIES.len(), expected.len());
     for q in &expected {
         assert!(VALID_QUALITIES.contains(q), "Missing quality: {}", q);
@@ -195,22 +202,34 @@ fn dolby_in_valid_qualities_and_has_display_name() {
 
 #[test]
 fn determine_extension_flac_by_url() {
-    assert_eq!(determine_file_extension("https://cdn.com/file.FLAC?token=abc", "mp3"), ".flac");
+    assert_eq!(
+        determine_file_extension("https://cdn.com/file.FLAC?token=abc", "mp3"),
+        ".flac"
+    );
 }
 
 #[test]
 fn determine_extension_flac_by_type() {
-    assert_eq!(determine_file_extension("https://cdn.com/file", "flac"), ".flac");
+    assert_eq!(
+        determine_file_extension("https://cdn.com/file", "flac"),
+        ".flac"
+    );
 }
 
 #[test]
 fn determine_extension_m4a_by_url() {
-    assert_eq!(determine_file_extension("https://cdn.com/file.m4a", ""), ".m4a");
+    assert_eq!(
+        determine_file_extension("https://cdn.com/file.m4a", ""),
+        ".m4a"
+    );
 }
 
 #[test]
 fn determine_extension_m4a_by_type() {
-    assert_eq!(determine_file_extension("https://cdn.com/file", "m4a"), ".m4a");
+    assert_eq!(
+        determine_file_extension("https://cdn.com/file", "m4a"),
+        ".m4a"
+    );
 }
 
 #[test]
@@ -228,9 +247,18 @@ fn build_file_path_includes_quality_dir() {
     let path = build_file_path(&PathBuf::from("/downloads"), &info, "hires");
     let path_str = path.to_string_lossy();
 
-    assert!(path_str.contains("hires"), "Path should contain quality dir");
-    assert!(path_str.ends_with(".flac"), "Path should have .flac extension");
-    assert!(path_str.contains("Test Song - Artist A_Artist B"), "Path should contain sanitized filename");
+    assert!(
+        path_str.contains("hires"),
+        "Path should contain quality dir"
+    );
+    assert!(
+        path_str.ends_with(".flac"),
+        "Path should have .flac extension"
+    );
+    assert!(
+        path_str.contains("Test Song - Artist A_Artist B"),
+        "Path should contain sanitized filename"
+    );
 }
 
 // --- TaskInfo ---

@@ -1,10 +1,12 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-8 retry 策略重构时拆 retry.rs / cookie_merge.rs
+
 use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::{Client, Response, StatusCode};
 use tracing::warn;
 
-use super::types::{USER_AGENT, REFERER, default_cookies};
+use super::types::{default_cookies, REFERER, USER_AGENT};
 use netease_kernel::error::AppError;
 
 const MAX_RETRIES: usize = 3;
@@ -27,6 +29,8 @@ impl HttpClient {
     ) -> Result<Response, AppError> {
         let mut last_err = None;
 
+        #[allow(clippy::needless_range_loop)]
+        // PR-1 scope: bootstrap CI; PR-8 重构 retry 策略时改用 iter
         for attempt in 0..MAX_RETRIES {
             let mut req = client.request(method.clone(), url);
 
@@ -70,14 +74,16 @@ impl HttpClient {
                         last_err = Some(format!("HTTP {}", resp.status()));
                         continue;
                     }
-                    return Err(AppError::Api(format!("HTTP request failed: {}", resp.status())));
+                    return Err(AppError::Api(format!(
+                        "HTTP request failed: {}",
+                        resp.status()
+                    )));
                 }
                 Err(e) => {
                     if (e.is_timeout() || e.is_connect()) && attempt < MAX_RETRIES - 1 {
                         warn!(
                             "Request error: {} - retrying in {}ms",
-                            e,
-                            RETRY_DELAYS_MS[attempt]
+                            e, RETRY_DELAYS_MS[attempt]
                         );
                         tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[attempt])).await;
                         last_err = Some(e.to_string());
@@ -146,8 +152,13 @@ impl HttpClient {
             .await
             .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))?;
 
-        serde_json::from_str(&text)
-            .map_err(|e| AppError::Api(format!("Failed to parse JSON: {} body={}", e, &text[..text.len().min(200)])))
+        serde_json::from_str(&text).map_err(|e| {
+            AppError::Api(format!(
+                "Failed to parse JSON: {} body={}",
+                e,
+                &text[..text.len().min(200)]
+            ))
+        })
     }
 
     pub async fn get_json(

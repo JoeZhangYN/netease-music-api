@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-9 handler 拆 download_async/{start,progress,result}.rs，worker 上移 domain::service::download_service::execute_single
+
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,7 +17,9 @@ use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
 use netease_domain::model::music_info::{DownloadUrl, MusicInfo};
 use netease_domain::service::download_service;
-use netease_infra::download::engine::{download_music_with_metadata, DownloadConfig, ProgressCallback};
+use netease_infra::download::engine::{
+    download_music_with_metadata, DownloadConfig, ProgressCallback,
+};
 use netease_infra::download::tags::write_music_tags;
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
@@ -106,10 +110,13 @@ pub async fn download_cancel(
     Path(task_id): Path<String>,
 ) -> (StatusCode, Json<APIResponse>) {
     state.cancelled.insert(task_id.clone(), ());
-    state.task_store.update(&task_id, Box::new(|t| {
-        t.stage = TaskStage::Error;
-        t.error = Some("已取消".into());
-    }));
+    state.task_store.update(
+        &task_id,
+        Box::new(|t| {
+            t.stage = TaskStage::Error;
+            t.error = Some("已取消".into());
+        }),
+    );
     APIResponse::success(json!({"task_id": task_id}), "任务已取消")
 }
 
@@ -141,10 +148,9 @@ pub async fn download_progress(
 
     let (status, json) = APIResponse::success(resp_data, "success");
     let mut response = (status, json).into_response();
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        "no-store".parse().unwrap(),
-    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     response
 }
 
@@ -163,9 +169,12 @@ pub async fn download_result(
 
     let first_access = task.stage == TaskStage::Done;
     if first_access {
-        state.task_store.update(&task_id, Box::new(|t| {
-            t.stage = TaskStage::Retrieved;
-        }));
+        state.task_store.update(
+            &task_id,
+            Box::new(|t| {
+                t.stage = TaskStage::Retrieved;
+            }),
+        );
     }
 
     let zip_path = match &task.zip_path {
@@ -208,9 +217,8 @@ pub async fn download_result(
         .header("X-Download-Filename", encoded_fn.as_ref())
         .header(header::CONTENT_LENGTH, file_size.to_string())
         .body(body)
-        .unwrap_or_else(|_| {
-            APIResponse::error("Response build failed", 500).into_response()
-        })
+        .ok()
+        .unwrap_or_else(|| APIResponse::error("Response build failed", 500).into_response())
 }
 
 async fn single_download_worker(
@@ -229,10 +237,13 @@ async fn single_download_worker(
     {
         Ok(Ok(permit)) => permit,
         _ => {
-            state.task_store.update(&task_id, Box::new(|t| {
-                t.stage = TaskStage::Error;
-                t.error = Some("下载队列繁忙，请稍后重试".into());
-            }));
+            state.task_store.update(
+                &task_id,
+                Box::new(|t| {
+                    t.stage = TaskStage::Error;
+                    t.error = Some("下载队列繁忙，请稍后重试".into());
+                }),
+            );
             if let Some(ref key) = dedup_key {
                 state.dedup.remove(key);
             }
@@ -245,10 +256,13 @@ async fn single_download_worker(
     if let Err(e) = do_single_download(&state, &task_id, &music_id, &quality, metadata).await {
         error!("Background download error: {}", e);
         let msg = e.to_string();
-        state.task_store.update(&task_id, Box::new(move |t| {
-            t.stage = TaskStage::Error;
-            t.error = Some(msg);
-        }));
+        state.task_store.update(
+            &task_id,
+            Box::new(move |t| {
+                t.stage = TaskStage::Error;
+                t.error = Some(msg);
+            }),
+        );
     }
 
     state.stats.decrement("download");
@@ -265,11 +279,14 @@ async fn do_single_download(
     quality: &str,
     metadata: Option<MusicInfo>,
 ) -> Result<(), String> {
-    state.task_store.update(task_id, Box::new(|t| {
-        t.stage = TaskStage::FetchingUrl;
-        t.percent = 0;
-        t.detail = "正在获取下载链接...".into();
-    }));
+    state.task_store.update(
+        task_id,
+        Box::new(|t| {
+            t.stage = TaskStage::FetchingUrl;
+            t.percent = 0;
+            t.detail = "正在获取下载链接...".into();
+        }),
+    );
 
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
@@ -287,10 +304,13 @@ async fn do_single_download(
             .unwrap_or("")
             .to_string();
         if download_url.is_empty() {
-            state.task_store.update(task_id, Box::new(|t| {
-                t.stage = TaskStage::Error;
-                t.error = Some("无可用的下载链接".into());
-            }));
+            state.task_store.update(
+                task_id,
+                Box::new(|t| {
+                    t.stage = TaskStage::Error;
+                    t.error = Some("无可用的下载链接".into());
+                }),
+            );
             return Ok(());
         }
 
@@ -309,11 +329,17 @@ async fn do_single_download(
         meta.file_size = file_size;
         meta
     } else {
-        state.task_store.update(task_id, Box::new(|t| {
-            t.detail = "正在获取歌曲信息...".into();
-        }));
+        state.task_store.update(
+            task_id,
+            Box::new(|t| {
+                t.detail = "正在获取歌曲信息...".into();
+            }),
+        );
 
-        let parse_permit = state.parse_semaphore.acquire().await
+        let parse_permit = state
+            .parse_semaphore
+            .acquire()
+            .await
             .map_err(|e| format!("parse semaphore closed: {}", e))?;
         state.stats.increment("parse");
 
@@ -342,11 +368,14 @@ async fn do_single_download(
         })
     };
 
-    state.task_store.update(task_id, Box::new(|t| {
-        t.stage = TaskStage::Downloading;
-        t.percent = 5;
-        t.detail = "正在下载音乐文件 (0%)...".into();
-    }));
+    state.task_store.update(
+        task_id,
+        Box::new(|t| {
+            t.stage = TaskStage::Downloading;
+            t.percent = 5;
+            t.detail = "正在下载音乐文件 (0%)...".into();
+        }),
+    );
 
     let task_id_owned = task_id.to_string();
     let task_store = state.task_store.clone();
@@ -355,10 +384,13 @@ async fn do_single_download(
             let pct = 5 + (downloaded as f64 / total as f64 * 85.0) as u32;
             let file_pct = (downloaded as f64 / total as f64 * 100.0) as u32;
             let detail = format!("正在下载音乐文件 ({}%)...", file_pct);
-            task_store.update(&task_id_owned, Box::new(move |t| {
-                t.percent = pct;
-                t.detail = detail;
-            }));
+            task_store.update(
+                &task_id_owned,
+                Box::new(move |t| {
+                    t.percent = pct;
+                    t.detail = detail;
+                }),
+            );
         }
     });
 
@@ -386,10 +418,13 @@ async fn do_single_download(
 
     if !result.success {
         let msg = result.error_message.clone();
-        state.task_store.update(task_id, Box::new(move |t| {
-            t.stage = TaskStage::Error;
-            t.error = Some(msg);
-        }));
+        state.task_store.update(
+            task_id,
+            Box::new(move |t| {
+                t.stage = TaskStage::Error;
+                t.error = Some(msg);
+            }),
+        );
         return Ok(());
     }
 
@@ -399,11 +434,14 @@ async fn do_single_download(
         return Ok(());
     }
 
-    state.task_store.update(task_id, Box::new(|t| {
-        t.stage = TaskStage::Packaging;
-        t.percent = 92;
-        t.detail = "正在打包...".into();
-    }));
+    state.task_store.update(
+        task_id,
+        Box::new(|t| {
+            t.stage = TaskStage::Packaging;
+            t.percent = 92;
+            t.detail = "正在打包...".into();
+        }),
+    );
 
     let file_path = result.file_path.as_ref().unwrap();
     write_music_tags(file_path, &music_info, cover_data.as_deref());
@@ -428,13 +466,16 @@ async fn do_single_download(
     );
 
     let zip_path_str = zip_path.to_string_lossy().to_string();
-    state.task_store.update(task_id, Box::new(move |t| {
-        t.stage = TaskStage::Done;
-        t.percent = 100;
-        t.detail = "下载完成".into();
-        t.zip_path = Some(zip_path_str);
-        t.zip_filename = Some(zip_filename);
-    }));
+    state.task_store.update(
+        task_id,
+        Box::new(move |t| {
+            t.stage = TaskStage::Done;
+            t.percent = 100;
+            t.detail = "下载完成".into();
+            t.zip_path = Some(zip_path_str);
+            t.zip_filename = Some(zip_filename);
+        }),
+    );
 
     Ok(())
 }

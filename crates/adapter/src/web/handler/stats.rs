@@ -13,9 +13,7 @@ use tokio_stream::StreamExt;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 
-pub async fn parse_stats(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
+pub async fn parse_stats(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let stats = state.stats.get_all();
     APIResponse::success(stats, "success")
 }
@@ -28,12 +26,13 @@ pub async fn parse_stats_stream(
     let initial_stats = state.stats.get_all();
     let initial_msg = serde_json::to_string(&initial_stats).unwrap_or_default();
 
-    let initial_stream = futures::stream::once(async move {
-        Ok::<_, Infallible>(Event::default().data(initial_msg))
-    });
+    let initial_stream =
+        futures::stream::once(
+            async move { Ok::<_, Infallible>(Event::default().data(initial_msg)) },
+        );
 
-    let broadcast_stream = BroadcastStream::new(rx).filter_map(|result: Result<String, _>| {
-        match result {
+    let broadcast_stream =
+        BroadcastStream::new(rx).filter_map(|result: Result<String, _>| match result {
             Ok(msg) => {
                 let data = msg
                     .strip_prefix("data: ")
@@ -43,8 +42,7 @@ pub async fn parse_stats_stream(
                 Some(Ok::<_, Infallible>(Event::default().data(data)))
             }
             Err(_) => None,
-        }
-    });
+        });
 
     let stream = initial_stream.chain(broadcast_stream);
 

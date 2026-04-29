@@ -67,8 +67,7 @@ impl RuntimeConfig {
             std::fs::create_dir_all(parent)?;
         }
         let tmp = path.with_extension("tmp");
-        let json = serde_json::to_string_pretty(self)
-            .map_err(io::Error::other)?;
+        let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, path)?;
         Ok(())

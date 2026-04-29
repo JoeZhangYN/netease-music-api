@@ -52,7 +52,8 @@ pub async fn get_album(
     };
     state.stats.increment("parse");
 
-    let result = match album_service::get_album(state.music_api.as_ref(), &album_id, &cookies).await {
+    let result = match album_service::get_album(state.music_api.as_ref(), &album_id, &cookies).await
+    {
         Ok(result) => APIResponse::success(
             json!({
                 "status": 200,

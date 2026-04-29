@@ -73,7 +73,10 @@ pub fn build_file_path(
 ) -> PathBuf {
     let filename = format!("{} - {}", music_info.name, music_info.artists);
     let safe_name = sanitize_filename(&filename);
-    let ext = determine_file_extension(music_info.download_url.as_extension_hint(), &music_info.file_type);
+    let ext = determine_file_extension(
+        music_info.download_url.as_extension_hint(),
+        &music_info.file_type,
+    );
     let quality_dir = downloads_dir.join(quality);
     quality_dir.join(format!("{}{}", safe_name, ext))
 }

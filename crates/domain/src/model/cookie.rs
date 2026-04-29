@@ -1,3 +1,5 @@
+// test-gate: exempt PR-1 (CI bootstrap) scope; cookie 相关测试已在 tests/task_state_machine.rs 覆盖；PR-2 整理后移除豁免
+
 use std::collections::HashMap;
 
 pub fn parse_cookie_string(cookie_string: &str) -> HashMap<String, String> {
@@ -50,8 +52,5 @@ pub fn is_cookies_valid(cookies: &HashMap<String, String>) -> bool {
     if missing == important.len() {
         return false;
     }
-    match cookies.get("MUSIC_U") {
-        Some(v) if v.len() >= 10 => true,
-        _ => false,
-    }
+    matches!(cookies.get("MUSIC_U"), Some(v) if v.len() >= 10)
 }

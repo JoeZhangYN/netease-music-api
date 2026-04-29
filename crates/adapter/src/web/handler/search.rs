@@ -54,10 +54,11 @@ pub async fn search_music(
     };
     state.stats.increment("parse");
 
-    let result = match search_service::search(state.music_api.as_ref(), &keyword, &cookies, limit).await {
-        Ok(result) => APIResponse::success(result, "搜索完成"),
-        Err(e) => APIResponse::error(&format!("搜索失败: {}", e), 500),
-    };
+    let result =
+        match search_service::search(state.music_api.as_ref(), &keyword, &cookies, limit).await {
+            Ok(result) => APIResponse::success(result, "搜索完成"),
+            Err(e) => APIResponse::error(&format!("搜索失败: {}", e), 500),
+        };
 
     state.stats.decrement("parse");
     drop(parse_permit);

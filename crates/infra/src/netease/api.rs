@@ -208,7 +208,11 @@ impl MusicApi for NeteaseApi {
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|t| t.get("id").and_then(|v| v.as_i64()).map(|id| id.to_string()))
+                    .filter_map(|t| {
+                        t.get("id")
+                            .and_then(|v| v.as_i64())
+                            .map(|id| id.to_string())
+                    })
                     .collect()
             })
             .unwrap_or_default();

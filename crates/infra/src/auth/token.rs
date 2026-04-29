@@ -80,7 +80,6 @@ pub fn validate_token(token: &str, secret: &[u8]) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_issue_and_validate() {

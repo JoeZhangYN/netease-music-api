@@ -1,0 +1,41 @@
+# Clippy 配置 — 与 [workspace.lints.clippy]（Cargo.toml）分工：
+# - Cargo.toml：lint **启用**（level = warn/deny），唯一源
+# - 本文件：lint **行为配置**（名单、in-tests 豁免等）
+#
+# 设计原则：
+# - Option<T> 端：unwrap_or_* 全部允许（None 不携带错误信息）
+# - Result<T, E> 端：分级——
+#   - `unwrap_or(literal)` / `unwrap_or_default()` 允许：字面量降级与 Option 等价，无副作用、无吞错风险
+#   - `unwrap_or_else(|e| ...)` 禁：闭包能藏副作用决策（`|e| { eprintln!("{e}"); default() }` = 真正的吞错重灾区）
+#   - 仍想做副作用降级 → 走 match { Err(e) => ... } 显式记录
+# - 测试代码：unwrap/expect/panic 允许（隐式断言，rules/common.md 认可）
+#
+# 配套规则：~/.claude/rules/rust.md
+# 配套门控：cargo clippy + dist gate 的 |_| 闭包扫描
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+
+# —— 设计决策记录 ——
+# 不在此处禁的常见反模式（散落 #[allow(clippy::expect_used)] 的高发场景）：
+# - std::sync::Mutex::lock() 后跟 expect("poisoned") —— 多数场景合理（poisoned = bug 应 panic），
+#   但散落 ≥3 处时**应抽 helper fn 集中一处 #[allow]**，详见 lang-rust SKILL.md "减少散落 #[allow]" 章节。
+#   不全局禁的原因：Mutex.lock 在某些场景（io 边界、低频读）合法用 std；强禁会破坏现有项目大量代码。
+# - axum::Response::builder() 后跟 expect("static valid") —— 同上，抽 static_ok_response helper。
+
+disallowed-methods = [
+    { path = "std::result::Result::unwrap_or_else", reason = "Result 端吞错重灾区——闭包能藏副作用决策（如 `|e| { eprintln!(\"{e}\"); default() }`）。要副作用降级走 match { Err(e) => ... } 显式记录；纯字面量降级用 `.unwrap_or(x)` / `.unwrap_or_default()`。" },
+    # —— 已被 std 替代的反 ROI 写法（lang-rust ROI 表 A 级）——
+    # 注：once_cell::sync::Lazy::new 不再禁——lazy-regex 等社区 crate 内部 re-export 会被 type resolver 错命中。
+    # 防御对象（用户新代码用老 once_cell::Lazy::new）改由 lang-rust SKILL.md 软引导：新代码优先 std::sync::LazyLock。
+    { path = "once_cell::sync::OnceCell::new", reason = "once_cell::sync::OnceCell 已被 std::sync::OnceLock 替代（Rust 1.70+，A 级 ROI）。" },
+    # —— edition 2024 起 stdlib 标 unsafe ——
+    { path = "std::env::set_var", reason = "edition 2024 起 unsafe（Unix 上线程不安全）；调用方需 unsafe { std::env::set_var(...) }" },
+    { path = "std::env::remove_var", reason = "edition 2024 起 unsafe；调用方需 unsafe { std::env::remove_var(...) }" },
+]
+
+disallowed-macros = [
+    { path = "lazy_static::lazy_static", reason = "lazy_static! 已被 std::sync::LazyLock 替代（Rust 1.80+，A 级 ROI）。直接 `static FOO: LazyLock<T> = LazyLock::new(|| ..);`" },
+]

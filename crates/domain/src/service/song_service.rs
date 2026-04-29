@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde_json::{json, Value};
 
-use crate::model::song::{SongUrlData, extract_artists};
 use crate::model::quality::quality_display_name;
+use crate::model::song::{extract_artists, SongUrlData};
 use crate::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
 use netease_kernel::util::format::format_file_size;
@@ -34,10 +34,7 @@ pub async fn handle_url(
     }))
 }
 
-pub async fn handle_name(
-    api: &dyn MusicApi,
-    music_id: &str,
-) -> Result<Value, AppError> {
+pub async fn handle_name(api: &dyn MusicApi, music_id: &str) -> Result<Value, AppError> {
     api.get_song_detail(music_id).await
 }
 
@@ -85,12 +82,10 @@ pub async fn handle_json(
             .get("level")
             .and_then(|v| v.as_str())
             .unwrap_or(level);
-        response_data["url"] =
-            json!(url_data.get("url").and_then(|v| v.as_str()).unwrap_or(""));
+        response_data["url"] = json!(url_data.get("url").and_then(|v| v.as_str()).unwrap_or(""));
         response_data["size"] = json!(format_file_size(size));
         response_data["size_raw"] = json!(size);
-        response_data["type"] =
-            json!(url_data.get("type").and_then(|v| v.as_str()).unwrap_or(""));
+        response_data["type"] = json!(url_data.get("type").and_then(|v| v.as_str()).unwrap_or(""));
         response_data["level"] = json!(actual_level);
     } else {
         response_data["url"] = json!("");

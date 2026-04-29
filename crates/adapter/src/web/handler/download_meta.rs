@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-9 handler 瘦身后回到 ≤80 SLOC
+
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -52,7 +54,11 @@ pub async fn download_with_metadata(
     };
     state.stats.increment("parse");
 
-    let url_result = match state.music_api.get_song_url(&music_id, &quality, &cookies).await {
+    let url_result = match state
+        .music_api
+        .get_song_url(&music_id, &quality, &cookies)
+        .await
+    {
         Ok(r) => {
             state.stats.decrement("parse");
             drop(parse_permit);
@@ -120,7 +126,9 @@ pub async fn download_with_metadata(
             false,
             &dl_config,
         ),
-        state.cover_cache.fetch(&state.http_client, &music_info.pic_url),
+        state
+            .cover_cache
+            .fetch(&state.http_client, &music_info.pic_url),
     );
 
     let result = match dl_result {
@@ -152,9 +160,7 @@ pub async fn download_with_metadata(
 
     let file = match tokio::fs::File::open(&zip_path).await {
         Ok(f) => f,
-        Err(e) => {
-            return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response()
-        }
+        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response(),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -181,7 +187,6 @@ pub async fn download_with_metadata(
         .header("X-Download-Message", "Download completed successfully")
         .header("X-Download-Filename", encoded_fn.as_ref())
         .body(body)
-        .unwrap_or_else(|_| {
-            APIResponse::error("Response build failed", 500).into_response()
-        })
+        .ok()
+        .unwrap_or_else(|| APIResponse::error("Response build failed", 500).into_response())
 }

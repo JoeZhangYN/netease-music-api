@@ -1,6 +1,6 @@
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use md5::{Md5, Digest};
+use base64::Engine;
+use md5::{Digest, Md5};
 
 pub fn netease_encrypt_id(id_str: &str) -> String {
     let magic = b"3go8&$8*3*3h0k(2)2";

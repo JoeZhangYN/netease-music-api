@@ -60,25 +60,15 @@ pub async fn get_music_info(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        duration: song_detail
-            .get("dt")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0)
-            / 1000,
-        track_number: song_detail
-            .get("no")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0) as i32,
+        duration: song_detail.get("dt").and_then(|v| v.as_i64()).unwrap_or(0) / 1000,
+        track_number: song_detail.get("no").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
         download_url: DownloadUrl::new(download_url),
         file_type: song_data
             .get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("mp3")
             .to_lowercase(),
-        file_size: song_data
-            .get("size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
+        file_size: song_data.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
         quality: quality.to_string(),
         lyric: lyric_result
             .as_ref()

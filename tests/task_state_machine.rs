@@ -33,7 +33,10 @@ fn exhaustive_terminal_check() {
     assert_eq!(terminal_count, 3, "Exactly 3 stages should be terminal");
 
     let non_terminal_count = all_stages.iter().filter(|s| !s.is_terminal()).count();
-    assert_eq!(non_terminal_count, 4, "Exactly 4 stages should be non-terminal");
+    assert_eq!(
+        non_terminal_count, 4,
+        "Exactly 4 stages should be non-terminal"
+    );
 }
 
 // --- TaskStage Display ---
@@ -53,13 +56,31 @@ fn stage_display_matches_expected_strings() {
 
 #[test]
 fn stage_serializes_to_snake_case() {
-    assert_eq!(serde_json::to_string(&TaskStage::Starting).unwrap(), "\"starting\"");
-    assert_eq!(serde_json::to_string(&TaskStage::FetchingUrl).unwrap(), "\"fetching_url\"");
-    assert_eq!(serde_json::to_string(&TaskStage::Downloading).unwrap(), "\"downloading\"");
-    assert_eq!(serde_json::to_string(&TaskStage::Packaging).unwrap(), "\"packaging\"");
+    assert_eq!(
+        serde_json::to_string(&TaskStage::Starting).unwrap(),
+        "\"starting\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskStage::FetchingUrl).unwrap(),
+        "\"fetching_url\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskStage::Downloading).unwrap(),
+        "\"downloading\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskStage::Packaging).unwrap(),
+        "\"packaging\""
+    );
     assert_eq!(serde_json::to_string(&TaskStage::Done).unwrap(), "\"done\"");
-    assert_eq!(serde_json::to_string(&TaskStage::Retrieved).unwrap(), "\"retrieved\"");
-    assert_eq!(serde_json::to_string(&TaskStage::Error).unwrap(), "\"error\"");
+    assert_eq!(
+        serde_json::to_string(&TaskStage::Retrieved).unwrap(),
+        "\"retrieved\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskStage::Error).unwrap(),
+        "\"error\""
+    );
 }
 
 // --- TaskStage PartialEq ---
@@ -253,7 +274,10 @@ fn batch_task_done_with_stats() {
     task.detail = "下载完成 (8/10)".into();
 
     assert!(task.stage.is_terminal());
-    assert_eq!(task.completed.unwrap() + task.failed.unwrap(), task.total.unwrap());
+    assert_eq!(
+        task.completed.unwrap() + task.failed.unwrap(),
+        task.total.unwrap()
+    );
 }
 
 // --- Cookie model ---

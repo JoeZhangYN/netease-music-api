@@ -1,6 +1,6 @@
 use aes::Aes128;
-use cipher::{BlockEncryptMut, KeyInit, block_padding::Pkcs7};
-use md5::{Md5, Digest};
+use cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyInit};
+use md5::{Digest, Md5};
 use serde_json::Value;
 use url::Url;
 
@@ -19,7 +19,10 @@ fn md5_hex(text: &str) -> String {
 }
 
 pub fn encrypt_params(url_str: &str, payload: &Value) -> String {
-    let parsed = Url::parse(url_str).unwrap_or_else(|_| Url::parse("http://localhost").unwrap());
+    let parsed = match Url::parse(url_str) {
+        Ok(u) => u,
+        Err(_) => Url::parse("http://localhost").expect("static fallback URL is valid"),
+    };
     let url_path = parsed.path().replace("/eapi/", "/api/");
 
     let json_payload = serde_json::to_string(payload).unwrap_or_default();

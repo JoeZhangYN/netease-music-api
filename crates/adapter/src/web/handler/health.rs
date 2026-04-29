@@ -9,9 +9,7 @@ use serde_json::json;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 
-pub async fn health_check(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
+pub async fn health_check(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let cookie_status = if state.cookie_store.is_valid() {
         "valid"
     } else {
@@ -24,7 +22,8 @@ pub async fn health_check(
         .as_secs();
 
     let downloads_dir = std::fs::canonicalize(&state.config.downloads_dir)
-        .unwrap_or_else(|_| state.config.downloads_dir.clone());
+        .ok()
+        .unwrap_or_else(|| state.config.downloads_dir.clone());
 
     APIResponse::success(
         json!({

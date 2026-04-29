@@ -30,10 +30,20 @@ pub async fn get_song_info(
     raw_body: Bytes,
 ) -> (StatusCode, Json<APIResponse>) {
     let body: SongParams = parse_body(&headers, &raw_body);
-    let ids = query.ids.or(body.ids).or(query.id.clone()).or(body.id.clone());
+    let ids = query
+        .ids
+        .or(body.ids)
+        .or(query.id.clone())
+        .or(body.id.clone());
     let url_param = query.url.or(body.url);
-    let level = query.level.or(body.level).unwrap_or_else(|| "lossless".into());
-    let info_type = query.info_type.or(body.info_type).unwrap_or_else(|| "url".into());
+    let level = query
+        .level
+        .or(body.level)
+        .unwrap_or_else(|| "lossless".into());
+    let info_type = query
+        .info_type
+        .or(body.info_type)
+        .unwrap_or_else(|| "url".into());
 
     let song_id_str = ids.or(url_param);
     let song_id_str = match song_id_str {

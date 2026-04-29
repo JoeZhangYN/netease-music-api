@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-9 handler 瘦身（PermitGuard + TempZipHandle + IntoResponse）后回到 ≤80 SLOC
+
 use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
@@ -7,10 +9,10 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::web::extract::parse_body;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
-use crate::web::extract::parse_body;
-use netease_domain::model::quality::{VALID_QUALITIES, quality_display_name};
+use netease_domain::model::quality::{quality_display_name, VALID_QUALITIES};
 use netease_infra::download::engine::{download_music_file, DownloadConfig};
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
@@ -31,8 +33,14 @@ pub async fn download_music(
 ) -> Response {
     let body: DownloadParams = parse_body(&headers, &raw_body);
     let music_id = query.id.or(body.id);
-    let quality = query.quality.or(body.quality).unwrap_or_else(|| "lossless".into());
-    let return_format = query.format.or(body.format).unwrap_or_else(|| "file".into());
+    let quality = query
+        .quality
+        .or(body.quality)
+        .unwrap_or_else(|| "lossless".into());
+    let return_format = query
+        .format
+        .or(body.format)
+        .unwrap_or_else(|| "file".into());
 
     let music_id = match music_id {
         Some(id) if !id.is_empty() => id,
@@ -123,10 +131,7 @@ pub async fn download_music(
     let mi = result.music_info.as_ref().unwrap();
 
     if return_format == "json" {
-        let file_type = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let file_type = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         return APIResponse::success(
             json!({
                 "music_id": music_id,
@@ -166,9 +171,7 @@ pub async fn download_music(
 
     let file = match tokio::fs::File::open(&zip_path).await {
         Ok(f) => f,
-        Err(e) => {
-            return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response()
-        }
+        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response(),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -195,7 +198,6 @@ pub async fn download_music(
         .header("X-Download-Message", "Download completed successfully")
         .header("X-Download-Filename", encoded_fn.as_ref())
         .body(body)
-        .unwrap_or_else(|_| {
-            APIResponse::error("Response build failed", 500).into_response()
-        })
+        .ok()
+        .unwrap_or_else(|| APIResponse::error("Response build failed", 500).into_response())
 }

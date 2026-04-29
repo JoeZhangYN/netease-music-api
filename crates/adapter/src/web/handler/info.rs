@@ -8,11 +8,10 @@ use serde_json::json;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 
-pub async fn api_info(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
+pub async fn api_info(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let downloads_dir = std::fs::canonicalize(&state.config.downloads_dir)
-        .unwrap_or_else(|_| state.config.downloads_dir.clone());
+        .ok()
+        .unwrap_or_else(|| state.config.downloads_dir.clone());
 
     APIResponse::success(
         json!({

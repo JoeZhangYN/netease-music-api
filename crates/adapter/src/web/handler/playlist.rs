@@ -52,7 +52,13 @@ pub async fn get_playlist(
     };
     state.stats.increment("parse");
 
-    let result = match playlist_service::get_playlist(state.music_api.as_ref(), &playlist_id, &cookies).await {
+    let result = match playlist_service::get_playlist(
+        state.music_api.as_ref(),
+        &playlist_id,
+        &cookies,
+    )
+    .await
+    {
         Ok(result) => APIResponse::success(
             json!({
                 "status": "success",

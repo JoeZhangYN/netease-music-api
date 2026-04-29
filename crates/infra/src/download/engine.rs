@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-8 拆 engine/{ctx,probe,single_stream,ranged,resume,retry}.rs 各 ≤150 SLOC
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -7,13 +9,13 @@ use reqwest::Client;
 use tokio::sync::Mutex;
 use tracing::warn;
 
+use crate::cache::cover_cache::CoverCache;
 use netease_domain::model::download::DownloadResult;
-use netease_domain::model::music_info::{MusicInfo, build_file_path};
+use netease_domain::model::music_info::{build_file_path, MusicInfo};
 use netease_domain::port::cookie_store::CookieStore;
 use netease_domain::port::music_api::MusicApi;
 use netease_domain::service::download_service;
 use netease_kernel::error::AppError;
-use crate::cache::cover_cache::CoverCache;
 
 use super::tags::write_music_tags;
 
@@ -74,9 +76,25 @@ pub async fn download_file_ranged(
     let content_length = content_length_hint;
 
     let result = if content_length > config.ranged_threshold {
-        download_adaptive(dl, url, file_path, content_length, on_progress.clone(), config).await
+        download_adaptive(
+            dl,
+            url,
+            file_path,
+            content_length,
+            on_progress.clone(),
+            config,
+        )
+        .await
     } else {
-        download_single_stream(dl, url, file_path, content_length, on_progress, config.max_retries).await
+        download_single_stream(
+            dl,
+            url,
+            file_path,
+            content_length,
+            on_progress,
+            config.max_retries,
+        )
+        .await
     };
 
     if result.is_err() {
@@ -110,8 +128,15 @@ async fn download_adaptive(
     {
         Ok(r) => r,
         Err(_) => {
-            return download_single_stream(client, url, file_path, content_length, on_progress, max_retries)
-                .await;
+            return download_single_stream(
+                client,
+                url,
+                file_path,
+                content_length,
+                on_progress,
+                max_retries,
+            )
+            .await;
         }
     };
 
@@ -143,7 +168,15 @@ async fn download_adaptive(
     } else if status == 200 || status == 203 {
         stream_response_to_file(resp, file_path, content_length, on_progress).await
     } else {
-        download_single_stream(client, url, file_path, content_length, on_progress, max_retries).await
+        download_single_stream(
+            client,
+            url,
+            file_path,
+            content_length,
+            on_progress,
+            max_retries,
+        )
+        .await
     }
 }
 
@@ -204,8 +237,7 @@ async fn download_remaining_and_assemble(
     max_retries: usize,
     on_progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
-    let downloaded_total =
-        Arc::new(std::sync::atomic::AtomicU64::new(first_data.len() as u64));
+    let downloaded_total = Arc::new(std::sync::atomic::AtomicU64::new(first_data.len() as u64));
     let results: Arc<Mutex<HashMap<u64, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
     results.lock().await.insert(0, first_data);
 
@@ -234,12 +266,10 @@ async fn download_remaining_and_assemble(
                 match fetch_range(&client, &url, start, end).await {
                     Ok(data) => {
                         let len = data.len() as u64;
-                        downloaded_total
-                            .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
+                        downloaded_total.fetch_add(len, std::sync::atomic::Ordering::Relaxed);
                         if let Some(ref cb) = on_progress {
                             cb(
-                                downloaded_total
-                                    .load(std::sync::atomic::Ordering::Relaxed),
+                                downloaded_total.load(std::sync::atomic::Ordering::Relaxed),
                                 cl,
                             );
                         }
@@ -249,10 +279,8 @@ async fn download_remaining_and_assemble(
                     Err(e) => {
                         if attempt < max_retries - 1 {
                             let delay_idx = attempt.min(RETRY_DELAYS_MS.len() - 1);
-                            tokio::time::sleep(Duration::from_millis(
-                                RETRY_DELAYS_MS[delay_idx],
-                            ))
-                            .await;
+                            tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[delay_idx]))
+                                .await;
                             continue;
                         }
                         return Err(e);
@@ -370,7 +398,12 @@ async fn download_stream_once(
     Ok(())
 }
 
-async fn fetch_range(client: &Client, url: &str, start: u64, end: u64) -> Result<Vec<u8>, AppError> {
+async fn fetch_range(
+    client: &Client,
+    url: &str,
+    start: u64,
+    end: u64,
+) -> Result<Vec<u8>, AppError> {
     let resp = client
         .get(url)
         .header("Range", format!("bytes={}-{}", start, end))
@@ -390,6 +423,7 @@ async fn fetch_range(client: &Client, url: &str, start: u64, end: u64) -> Result
     Ok(data.to_vec())
 }
 
+#[allow(clippy::too_many_arguments)] // PR-1 scope: bootstrap CI; PR-8 拆 DownloadCtx struct 时根除
 pub async fn download_music_file(
     client: &Client,
     api: &dyn MusicApi,
@@ -412,23 +446,39 @@ pub async fn download_music_file(
     let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
     if cached_size > 0 {
         let cover_data = cover_cache.fetch(client, &music_info.pic_url).await;
-        return Ok(DownloadResult::ok_with_cover(file_path, cached_size, music_info, cover_data));
+        return Ok(DownloadResult::ok_with_cover(
+            file_path,
+            cached_size,
+            music_info,
+            cover_data,
+        ));
     }
 
-    super::disk_guard::ensure_disk_space(downloads_dir, music_info.file_size, config.min_free_disk)?;
+    super::disk_guard::ensure_disk_space(
+        downloads_dir,
+        music_info.file_size,
+        config.min_free_disk,
+    )?;
 
     let (dl_result, cover_data) = tokio::join!(
-        download_file_ranged(client, music_info.download_url.as_str(), &file_path, music_info.file_size, on_progress, config),
+        download_file_ranged(
+            client,
+            music_info.download_url.as_str(),
+            &file_path,
+            music_info.file_size,
+            on_progress,
+            config
+        ),
         cover_cache.fetch(client, &music_info.pic_url),
     );
     dl_result?;
 
     write_music_tags(&file_path, &music_info, cover_data.as_deref());
 
-    let size = std::fs::metadata(&file_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    Ok(DownloadResult::ok_with_cover(file_path, size, music_info, cover_data))
+    let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    Ok(DownloadResult::ok_with_cover(
+        file_path, size, music_info, cover_data,
+    ))
 }
 
 pub async fn download_music_with_metadata(
@@ -453,19 +503,33 @@ pub async fn download_music_with_metadata(
 
     let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
     if cached_size > 0 {
-        return Ok(DownloadResult::ok(file_path, cached_size, music_info.clone()));
+        return Ok(DownloadResult::ok(
+            file_path,
+            cached_size,
+            music_info.clone(),
+        ));
     }
 
-    super::disk_guard::ensure_disk_space(downloads_dir, music_info.file_size, config.min_free_disk)?;
+    super::disk_guard::ensure_disk_space(
+        downloads_dir,
+        music_info.file_size,
+        config.min_free_disk,
+    )?;
 
-    download_file_ranged(client, music_info.download_url.as_str(), &file_path, music_info.file_size, on_progress, config).await?;
+    download_file_ranged(
+        client,
+        music_info.download_url.as_str(),
+        &file_path,
+        music_info.file_size,
+        on_progress,
+        config,
+    )
+    .await?;
 
     if do_write_tags {
         write_music_tags(&file_path, music_info, cover_data);
     }
 
-    let size = std::fs::metadata(&file_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
     Ok(DownloadResult::ok(file_path, size, music_info.clone()))
 }

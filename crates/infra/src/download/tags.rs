@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use lofty::config::WriteOptions;
-use lofty::prelude::*;
 use lofty::picture::{MimeType, Picture, PictureType};
-use lofty::tag::{Tag, TagType, Accessor};
+use lofty::prelude::*;
+use lofty::tag::{Accessor, Tag, TagType};
 use tracing::warn;
 
 use netease_domain::model::music_info::MusicInfo;

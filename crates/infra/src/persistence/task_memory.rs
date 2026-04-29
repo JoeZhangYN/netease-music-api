@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 
-use netease_domain::model::download::{TaskInfo, now};
+use netease_domain::model::download::{now, TaskInfo};
 use netease_domain::port::task_store::TaskStore;
 
 const ZIP_DIR_NAME: &str = "music_api_zips";
@@ -27,7 +27,8 @@ impl InMemoryTaskStore {
     pub fn update_config(&self, ttl: u64, zip_age: u64, interval: u64) {
         self.task_ttl_secs.store(ttl, Ordering::Relaxed);
         self.zip_max_age_secs.store(zip_age, Ordering::Relaxed);
-        self.cleanup_interval_secs.store(interval, Ordering::Relaxed);
+        self.cleanup_interval_secs
+            .store(interval, Ordering::Relaxed);
     }
 
     pub fn start_cleanup_loop(self: &std::sync::Arc<Self>) {
@@ -95,8 +96,7 @@ impl TaskStore for InMemoryTaskStore {
             .iter()
             .filter(|entry| {
                 let task = entry.value();
-                task.stage.is_terminal()
-                    && current - task.created_at > task_ttl
+                task.stage.is_terminal() && current - task.created_at > task_ttl
             })
             .map(|entry| entry.key().clone())
             .collect();

@@ -3,6 +3,9 @@ name = "netease-kernel"
 version = "2.0.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [dependencies]
 thiserror = "2"
 anyhow = "1"

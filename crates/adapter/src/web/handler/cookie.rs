@@ -41,9 +41,7 @@ pub async fn set_cookie(
     }
 }
 
-pub async fn cookie_status(
-    State(state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
+pub async fn cookie_status(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let valid = cookie_service::check_status(state.cookie_store.as_ref());
     let status = if valid { "valid" } else { "invalid" };
     APIResponse::success(json!({"cookie_status": status}), "查询成功")

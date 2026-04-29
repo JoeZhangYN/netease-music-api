@@ -1,3 +1,5 @@
+// file-size-gate: exempt PR-1 (CI bootstrap); PR-9 拆 sync.rs / async_start.rs；375-行 worker 上移到 domain::service::batch_download_service
+
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,11 +18,11 @@ use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
 use netease_domain::model::music_info::{build_file_path, MusicInfo};
 use netease_domain::service::download_service;
+use netease_infra::download::disk_guard;
 use netease_infra::download::engine::{
     download_file_ranged, download_music_file, DownloadConfig, ProgressCallback,
 };
-use netease_infra::download::tags::{write_music_tags, verify_tags};
-use netease_infra::download::disk_guard;
+use netease_infra::download::tags::{verify_tags, write_music_tags};
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
 
@@ -53,7 +55,8 @@ pub async fn download_batch(
 
     let batch_max = state.runtime_config.load().batch_max_songs;
     if ids.len() > batch_max {
-        return APIResponse::error(&format!("单次批量下载最多{}首", batch_max), 400).into_response();
+        return APIResponse::error(&format!("单次批量下载最多{}首", batch_max), 400)
+            .into_response();
     }
 
     let quality = data.quality.clone().unwrap_or_else(|| "lossless".into());
@@ -81,28 +84,24 @@ pub async fn download_batch(
 
     let mut track_data: Vec<TrackData> = Vec::new();
     for mid in &unique_ids {
-        let parse_permit = match tokio::time::timeout(
-            Duration::from_secs(30),
-            state.parse_semaphore.acquire(),
-        )
-        .await
-        {
-            Ok(Ok(p)) => Some(p),
-            _ => None,
-        };
+        let parse_permit =
+            match tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire())
+                .await
+            {
+                Ok(Ok(p)) => Some(p),
+                _ => None,
+            };
         if parse_permit.is_some() {
             state.stats.increment("parse");
         }
 
-        let download_permit = match tokio::time::timeout(
-            Duration::from_secs(60),
-            state.download_semaphore.acquire(),
-        )
-        .await
-        {
-            Ok(Ok(p)) => Some(p),
-            _ => None,
-        };
+        let download_permit =
+            match tokio::time::timeout(Duration::from_secs(60), state.download_semaphore.acquire())
+                .await
+            {
+                Ok(Ok(p)) => Some(p),
+                _ => None,
+            };
         if download_permit.is_some() {
             state.stats.increment("download");
         }
@@ -157,9 +156,7 @@ pub async fn download_batch(
 
     let file = match tokio::fs::File::open(&zip_path).await {
         Ok(f) => f,
-        Err(e) => {
-            return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response()
-        }
+        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response(),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -187,9 +184,8 @@ pub async fn download_batch(
         .header("X-Batch-Total", total.to_string())
         .header("X-Batch-Success", success_count.to_string())
         .body(body)
-        .unwrap_or_else(|_| {
-            APIResponse::error("Response build failed", 500).into_response()
-        })
+        .ok()
+        .unwrap_or_else(|| APIResponse::error("Response build failed", 500).into_response())
 }
 
 pub async fn download_batch_start(
@@ -234,6 +230,8 @@ fn write_tags_with_retry(
     music_info: &netease_domain::model::music_info::MusicInfo,
     cover_data: Option<&[u8]>,
 ) -> bool {
+    #[allow(clippy::needless_range_loop)]
+    // PR-1 scope: bootstrap CI; PR-9 worker 上移到 domain 时改用 iter
     for attempt in 0..TAG_RETRY_COUNT {
         write_music_tags(file_path, music_info, cover_data);
         if verify_tags(file_path) {
@@ -259,10 +257,13 @@ async fn batch_download_worker(
     let _batch_permit = match state.batch_semaphore.try_acquire() {
         Ok(permit) => permit,
         Err(_) => {
-            state.task_store.update(&task_id, Box::new(|t| {
-                t.stage = TaskStage::Error;
-                t.error = Some("已有批量下载任务正在执行".into());
-            }));
+            state.task_store.update(
+                &task_id,
+                Box::new(|t| {
+                    t.stage = TaskStage::Error;
+                    t.error = Some("已有批量下载任务正在执行".into());
+                }),
+            );
             return;
         }
     };
@@ -333,15 +334,18 @@ async fn batch_download_worker(
         let pct = progress_base as u32;
         let total = total_tracks;
         let resolving_detail = format!("正在解析 ({}/{})...", i + 1, total);
-        state.task_store.update(&task_id, Box::new(move |t| {
-            t.stage = TaskStage::Downloading;
-            t.detail = resolving_detail;
-            t.percent = pct;
-            t.current = Some(i as u32 + 1);
-            t.total = Some(total as u32);
-            t.completed = Some(comp);
-            t.failed = Some(fail);
-        }));
+        state.task_store.update(
+            &task_id,
+            Box::new(move |t| {
+                t.stage = TaskStage::Downloading;
+                t.detail = resolving_detail;
+                t.percent = pct;
+                t.current = Some(i as u32 + 1);
+                t.total = Some(total as u32);
+                t.completed = Some(comp);
+                t.failed = Some(fail);
+            }),
+        );
 
         let music_info = if let Some(info) = prefetched_info {
             info
@@ -447,11 +451,7 @@ async fn batch_download_worker(
 
         state.stats.increment("download");
 
-        let file_path = build_file_path(
-            &state.config.downloads_dir,
-            &music_info,
-            &quality,
-        );
+        let file_path = build_file_path(&state.config.downloads_dir, &music_info, &quality);
 
         if let Some(parent) = file_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -492,7 +492,11 @@ async fn batch_download_worker(
                 let overall_pct = (cb_base + file_pct as f64 / 100.0 * cb_dl_pct) as u32;
                 let detail = format!(
                     "正在下载 {} - {} ({}%) [{}/{}]",
-                    name_cb, artists_cb, file_pct, track_idx + 1, total_cb,
+                    name_cb,
+                    artists_cb,
+                    file_pct,
+                    track_idx + 1,
+                    total_cb,
                 );
                 task_store.update(
                     &task_id_for_cb,
@@ -581,20 +585,26 @@ async fn batch_download_worker(
     }
 
     if track_data.is_empty() {
-        state.task_store.update(&task_id, Box::new(|t| {
-            t.stage = TaskStage::Error;
-            t.error = Some("所有曲目下载失败".into());
-        }));
+        state.task_store.update(
+            &task_id,
+            Box::new(|t| {
+                t.stage = TaskStage::Error;
+                t.error = Some("所有曲目下载失败".into());
+            }),
+        );
         return;
     }
 
     // --- Packaging phase: 90% → 100% ---
     let track_len = track_data.len();
-    state.task_store.update(&task_id, Box::new(move |t| {
-        t.stage = TaskStage::Packaging;
-        t.percent = 90;
-        t.detail = format!("正在打包 {} 首歌曲...", track_len);
-    }));
+    state.task_store.update(
+        &task_id,
+        Box::new(move |t| {
+            t.stage = TaskStage::Packaging;
+            t.percent = 90;
+            t.detail = format!("正在打包 {} 首歌曲...", track_len);
+        }),
+    );
 
     let zip_dir = std::env::temp_dir().join("music_api_zips");
     let _ = std::fs::create_dir_all(&zip_dir);
@@ -605,23 +615,29 @@ async fn batch_download_worker(
             let zip_filename = format!("batch_{}tracks.zip", completed);
             let zip_path_str = zip_path.to_string_lossy().to_string();
             let unique_total = total_tracks as u32 - skipped;
-            state.task_store.update(&task_id, Box::new(move |t| {
-                t.stage = TaskStage::Done;
-                t.percent = 100;
-                t.detail = format!("下载完成 ({}/{})", completed, unique_total);
-                t.zip_path = Some(zip_path_str);
-                t.zip_filename = Some(zip_filename);
-                t.completed = Some(completed);
-                t.failed = Some(failed);
-            }));
+            state.task_store.update(
+                &task_id,
+                Box::new(move |t| {
+                    t.stage = TaskStage::Done;
+                    t.percent = 100;
+                    t.detail = format!("下载完成 ({}/{})", completed, unique_total);
+                    t.zip_path = Some(zip_path_str);
+                    t.zip_filename = Some(zip_filename);
+                    t.completed = Some(completed);
+                    t.failed = Some(failed);
+                }),
+            );
         }
         Err(e) => {
             error!("Failed to build batch ZIP: {}", e);
             let msg = format!("打包失败: {}", e);
-            state.task_store.update(&task_id, Box::new(move |t| {
-                t.stage = TaskStage::Error;
-                t.error = Some(msg);
-            }));
+            state.task_store.update(
+                &task_id,
+                Box::new(move |t| {
+                    t.stage = TaskStage::Error;
+                    t.error = Some(msg);
+                }),
+            );
         }
     }
 }
