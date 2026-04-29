@@ -16,6 +16,7 @@ use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
 use netease_domain::model::music_info::{DownloadUrl, MusicInfo};
+use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_domain::service::download_service;
 use netease_infra::download::engine::{
     download_music_with_metadata, DownloadConfig, ProgressCallback,
@@ -46,7 +47,10 @@ pub async fn download_start(
         _ => return APIResponse::error("缺少参数 'id'", 400),
     };
 
-    let quality = data.quality.clone().unwrap_or_else(|| "lossless".into());
+    let quality = data
+        .quality
+        .clone()
+        .unwrap_or_else(|| DEFAULT_QUALITY.into());
     let music_id = extract_music_id(&raw_id, &state.http_client).await;
     let dedup_key = format!("{}_{}", music_id, quality);
 

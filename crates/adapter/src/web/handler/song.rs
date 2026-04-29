@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::web::extract::parse_body;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
-use netease_domain::model::quality::{VALID_QUALITIES, VALID_TYPES};
+use netease_domain::model::quality::{DEFAULT_QUALITY, VALID_QUALITIES, VALID_TYPES};
 use netease_domain::service::song_service;
 use netease_infra::extract_id::extract_music_id;
 
@@ -39,7 +39,7 @@ pub async fn get_song_info(
     let level = query
         .level
         .or(body.level)
-        .unwrap_or_else(|| "lossless".into());
+        .unwrap_or_else(|| DEFAULT_QUALITY.into());
     let info_type = query
         .info_type
         .or(body.info_type)

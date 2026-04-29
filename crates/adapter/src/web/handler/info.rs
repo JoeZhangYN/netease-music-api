@@ -7,11 +7,16 @@ use serde_json::json;
 
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
+use netease_domain::model::quality::Quality;
 
 pub async fn api_info(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
     let downloads_dir = std::fs::canonicalize(&state.config.downloads_dir)
         .ok()
         .unwrap_or_else(|| state.config.downloads_dir.clone());
+
+    // PR-4: derive supported_qualities from Quality::ALL — pre-PR-4 this
+    // hand-listed 7 of 8 variants (missing "dolby"), a real SOT drift.
+    let supported_qualities: Vec<&str> = Quality::ALL.iter().map(|q| q.wire_str()).collect();
 
     APIResponse::success(
         json!({
@@ -31,10 +36,7 @@ pub async fn api_info(State(state): State<Arc<AppState>>) -> (StatusCode, Json<A
                 "/cookie/status": "GET - 查询Cookie状态",
                 "/api/info": "GET - API信息",
             },
-            "supported_qualities": [
-                "standard", "exhigh", "lossless",
-                "hires", "sky", "jyeffect", "jymaster"
-            ],
+            "supported_qualities": supported_qualities,
             "config": {
                 "downloads_dir": downloads_dir.to_string_lossy(),
                 "max_file_size": format!("{}MB", state.config.max_file_size / (1024 * 1024)),

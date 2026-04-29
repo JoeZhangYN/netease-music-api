@@ -12,6 +12,7 @@ use tracing::warn;
 use crate::cache::cover_cache::CoverCache;
 use netease_domain::model::download::DownloadResult;
 use netease_domain::model::music_info::{build_file_path, MusicInfo};
+use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_domain::port::cookie_store::CookieStore;
 use netease_domain::port::music_api::MusicApi;
 use netease_domain::service::download_service;
@@ -599,7 +600,7 @@ pub async fn download_music_with_metadata(
     config: &DownloadConfig,
 ) -> Result<DownloadResult, AppError> {
     let quality = if music_info.quality.is_empty() {
-        "lossless"
+        DEFAULT_QUALITY
     } else {
         &music_info.quality
     };

@@ -60,6 +60,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MusicApi::get_song_url`.
 
 ### Changed
+- **PR-4 — Quality enum SOT + `dolby` drift fix.** Replaces
+  `pub const VALID_QUALITIES: &[&str]` (typo-vulnerable, 7-of-8 drift in
+  `info.rs`) with a real `enum Quality` carrying compile-time exhaustive
+  match across all 8 variants.
+  - `crates/domain/src/model/quality.rs` (rewrite, 154 SLOC):
+    - `enum Quality { Standard, Exhigh, Lossless (default), Hires, Sky,
+      Jyeffect, Jymaster, Dolby }` with `#[serde(rename_all = "lowercase")]`
+      preserving wire format byte-identically.
+    - `Quality::ALL: [Quality; 8]`, `wire_str()`, `display_name_zh()`,
+      `Default = Lossless`, `Display`, `FromStr` (with `InvalidQuality`
+      error type).
+    - `pub const DEFAULT_QUALITY: &str = "lossless"` replaces 6 scattered
+      `unwrap_or_else(|| "lossless".into())` sites in handlers +
+      `engine.rs::download_music_with_metadata` quality fallback.
+    - Compat shims kept: `VALID_QUALITIES` (now in lock-step with
+      `Quality::ALL` via `valid_qualities_const_in_lockstep_with_enum`
+      test), `quality_display_name` (delegates to `Quality::FromStr +
+      display_name_zh`).
+    - 11 inline tests including round-trip serde, `display_name_zh` for
+      all 8 variants, lock-step invariant, default, FromStr rejects
+      unknown.
+  - `crates/adapter/src/web/handler/info.rs`: `supported_qualities`
+    derived from `Quality::ALL` — the hand-listed 7-quality drift is now
+    impossible (would require modifying `Quality::ALL` which fails every
+    `match` site at compile time).
+  - 6 handler files migrated from string literal to `DEFAULT_QUALITY`:
+    `download.rs`, `download_async.rs`, `download_batch.rs` (×2),
+    `download_meta.rs`, `song.rs`.
+  - `engine.rs::download_music_with_metadata` empty-quality fallback
+    now uses `DEFAULT_QUALITY` const.
+- **`#[serde(alias)]` defensive scaffolding for `RuntimeConfig`**:
+  deferred — without an actual rename target, self-aliases are no-ops.
+  Will land alongside any future `RuntimeConfig` field rename per the
+  PR-2 round-trip test that locks current field names.
+- Total tests: 114 → 125 (+11 in quality.rs).
+
+### Changed
 - `.gitignore` now also ignores `/logs/` (structured JSONL log directory introduced in PR-5) and `devnull` (occasional `2>devnull` artifact).
 
 ### Notes

@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::music_info::{DownloadUrl, MusicInfo};
+use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_infra::download::engine::{download_music_with_metadata, DownloadConfig};
 use netease_infra::download::tags::write_music_tags;
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
@@ -39,7 +40,7 @@ pub async fn download_with_metadata(
         _ => return APIResponse::error("缺少必填参数 'id'", 400).into_response(),
     };
 
-    let quality = data.quality.unwrap_or_else(|| "lossless".into());
+    let quality = data.quality.unwrap_or_else(|| DEFAULT_QUALITY.into());
     let music_id = extract_music_id(&raw_id, &state.http_client).await;
     let cookies = state.cookie_store.parse().unwrap_or_default();
 

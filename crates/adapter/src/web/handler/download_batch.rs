@@ -17,6 +17,7 @@ use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
 use netease_domain::model::music_info::{build_file_path, MusicInfo};
+use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_domain::service::download_service;
 use netease_infra::download::disk_guard;
 use netease_infra::download::engine::{
@@ -59,7 +60,10 @@ pub async fn download_batch(
             .into_response();
     }
 
-    let quality = data.quality.clone().unwrap_or_else(|| "lossless".into());
+    let quality = data
+        .quality
+        .clone()
+        .unwrap_or_else(|| DEFAULT_QUALITY.into());
 
     let dl_config = {
         let rc = state.runtime_config.load();
@@ -202,7 +206,10 @@ pub async fn download_batch_start(
         return APIResponse::error(&format!("单次最多{}首", batch_max), 400);
     }
 
-    let quality = data.quality.clone().unwrap_or_else(|| "lossless".into());
+    let quality = data
+        .quality
+        .clone()
+        .unwrap_or_else(|| DEFAULT_QUALITY.into());
 
     if state.batch_semaphore.available_permits() == 0 {
         return APIResponse::error("已有批量下载任务正在执行，请等待完成后重试", 429);
