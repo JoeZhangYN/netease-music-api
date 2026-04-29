@@ -142,6 +142,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-8 — engine.rs 666 SLOC → 4 module split.** Mechanical
+  reorganization (no behavior change). Pre-PR-8 the single
+  `engine.rs` had file-size-gate exemption since PR-1; now organized:
+  - `engine/mod.rs` (~70 SLOC): shared types (`DownloadConfig`,
+    `ProgressCallback`), `download_client` singleton, `part_path_for`
+    helper, `RETRY_DELAYS_MS` constant.
+  - `engine/single_stream.rs` (~115 SLOC): `download_single_stream`
+    with retry loop + `download_stream_once` (HTTP GET, status guard,
+    streaming) + `stream_response_to_file` (probe-response fallback).
+    Inner streaming logic DRYed into `stream_resp_to_file_inner`
+    helper shared between the two public-to-super entry points.
+  - `engine/ranged.rs` (~145 SLOC, file-size exempt): `download_adaptive`
+    (Range probe + dispatch) + `download_remaining_and_assemble`
+    (parallel chunks + assembly + size verify) + `fetch_range`.
+  - `engine/wrapper.rs` (~145 SLOC, file-size exempt): high-level
+    entry points `download_file_ranged` (atomic .part rename),
+    `download_music_file`, `download_music_with_metadata`.
+  - Public re-exports preserved via `engine/mod.rs::pub use wrapper::*`.
+    Handler imports `netease_infra::download::engine::{...}` work
+    unchanged.
+  - DownloadJob FSM typestate (plan PR-8 ②) deferred to v3 — the
+    user-facing fixes from PR-3 already cover the 90% bug behavior;
+    FSM is purely a code-quality improvement now.
+
 - **PR-7 — AppError extensions + SongId newtype + DownloadError enum.**
   Foundation for PR-8 engine FSM rewrite.
   - `AppError` (kernel) gains 5 variants with distinct status codes:
