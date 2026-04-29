@@ -142,6 +142,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-7 — AppError extensions + SongId newtype + DownloadError enum.**
+  Foundation for PR-8 engine FSM rewrite.
+  - `AppError` (kernel) gains 5 variants with distinct status codes:
+    `Cancelled` (499), `Timeout(String)` (504), `UrlUnavailable(i64)`
+    (502), `InvalidTransition(String)` (500), `QualityParse(String)`
+    (400). Status code mapping unit-tested.
+  - `SongId(NonZeroI64)` newtype in `domain/src/model/song.rs` with
+    smart constructor `try_new(i64) → Result<SongId, AppError>`,
+    `FromStr`, `Display`, `serde(transparent)`. Rejects 0/negative
+    so the `0 = unknown song` sentinel pattern (used in
+    `download_async.rs:71` etc.) becomes unrepresentable. Pre-PR-7
+    callers using `music_id.parse().unwrap_or(0)` produce a SongId
+    that is impossible — they must `?`-propagate the error.
+  - `DownloadError` enum in `domain/src/model/download.rs` with
+    fine-grained variants (`UrlExpired{status}`, `ChunkShortRead`,
+    `DiskFull{need,have}`, `Cancelled`, `Timeout{secs}`, `Network`,
+    `Io`, `Other`) plus `From<DownloadError> for AppError` collapsing
+    to coarse HTTP boundary types. Engine retry decisions in PR-8
+    branch on the fine variants; the HTTP boundary sees only
+    `AppError`.
+  - Domain crate gains `thiserror = "2"` dep.
+  - 7 inline tests: AppError status codes (PR-7 + preserved),
+    SongId rejects 0/negative, accepts positive, FromStr,
+    serde(transparent) JSON shape.
+- Total tests: 135 → 142 (+7).
+- **MusicInfo split + DownloadOutcome enum (plan PR-7 ②③)**: deferred
+  to PR-8 where the typestate naturally accompanies the engine FSM
+  rewrite. Introducing them earlier requires updating every caller
+  twice (once for split, once for FSM); folding into PR-8 keeps the
+  cascade single-pass.
+
 - **PR-6 (partial) — `MusicApi::get_song_url` typed return.** First slice
   of "kill `serde_json::Value` returns" — most-impactful method (5
   callers were doing independent `.pointer("/data/0/url")` parsing).

@@ -1,7 +1,51 @@
 // test-gate: exempt PR-6 — SongUrlData round-trip 通过 song_service handler tests 间接覆盖；extract_artists 在 contract_download_link.rs 间接覆盖
+// file-size-gate: exempt PR-7 — SongUrlData + SongId 同主题（song-related types），拆开冗余
+
+use std::num::NonZeroI64;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use netease_kernel::error::AppError;
+
+/// PR-7 — `SongId` smart constructor. Rejects 0 and negative ids at the
+/// boundary. Internal `NonZeroI64` lets `Option<SongId>` be a single
+/// pointer (niche optimization) and makes "0 = unknown" sentinel
+/// patterns impossible to express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SongId(NonZeroI64);
+
+impl SongId {
+    pub fn try_new(v: i64) -> Result<Self, AppError> {
+        NonZeroI64::new(v)
+            .map(SongId)
+            .filter(|id| id.0.get() > 0)
+            .ok_or_else(|| {
+                AppError::Validation(format!("song id must be positive non-zero: {}", v))
+            })
+    }
+
+    pub fn get(self) -> i64 {
+        self.0.get()
+    }
+}
+
+impl std::fmt::Display for SongId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::str::FromStr for SongId {
+    type Err = AppError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let n: i64 = s
+            .parse()
+            .map_err(|_| AppError::Validation(format!("song id not a valid integer: {}", s)))?;
+        Self::try_new(n)
+    }
+}
 
 /// PR-6 — typed result of `MusicApi::get_song_url`. Pre-PR-6 the trait
 /// returned `serde_json::Value` and 5 callers each ran
@@ -96,5 +140,41 @@ mod tests {
     fn missing_url_returns_none() {
         let v = json!({"size": 100});
         assert!(SongUrlData::from_api_response(&v).is_none());
+    }
+
+    // ---------- PR-7 SongId tests ----------
+    #[test]
+    fn song_id_rejects_zero() {
+        let err = SongId::try_new(0).unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn song_id_rejects_negative() {
+        let err = SongId::try_new(-42).unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn song_id_accepts_positive() {
+        let id = SongId::try_new(12345).expect("12345 is valid");
+        assert_eq!(id.get(), 12345);
+        assert_eq!(format!("{}", id), "12345");
+    }
+
+    #[test]
+    fn song_id_from_str() {
+        use std::str::FromStr;
+        assert_eq!(SongId::from_str("100").unwrap().get(), 100);
+        assert!(SongId::from_str("0").is_err());
+        assert!(SongId::from_str("not a number").is_err());
+        assert!(SongId::from_str("-5").is_err());
+    }
+
+    #[test]
+    fn song_id_serde_transparent() {
+        let id = SongId::try_new(999).unwrap();
+        let json = serde_json::to_string(&id).unwrap();
+        assert_eq!(json, "999"); // serde transparent — no wrapper
     }
 }

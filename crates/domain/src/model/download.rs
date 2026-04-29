@@ -1,11 +1,68 @@
 // test-gate: exempt PR-1 (CI bootstrap) scope; download 模型测试已在 tests/contract_download_link.rs + tests/task_state_machine.rs 覆盖；PR-7 重构为 DownloadOutcome enum 时再统一移除豁免
+// file-size-gate: exempt PR-7 — DownloadResult / TaskInfo / DownloadError 同主题
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use netease_kernel::error::AppError;
+
 use super::music_info::MusicInfo;
+
+/// PR-7 — fine-grained download error variants. The engine's internal
+/// retry policy decisions distinguish these (e.g. `UrlExpired` triggers
+/// URL refresh in PR-8, `Network` triggers backoff retry,
+/// `DiskFull` is fail-fast). Coarse-grained `From<DownloadError> for
+/// AppError` collapses these for HTTP boundary status mapping.
+#[derive(Debug, thiserror::Error)]
+pub enum DownloadError {
+    #[error("URL expired (HTTP {status})")]
+    UrlExpired { status: u16 },
+
+    #[error("Chunk short read: expected {expected}, got {actual}")]
+    ChunkShortRead { expected: u64, actual: u64 },
+
+    #[error("Disk full: need {need} bytes, have {have}")]
+    DiskFull { need: u64, have: u64 },
+
+    #[error("Cancelled")]
+    Cancelled,
+
+    #[error("Timeout {secs}s")]
+    Timeout { secs: u64 },
+
+    #[error("Network: {0}")]
+    Network(String),
+
+    #[error("IO: {0}")]
+    Io(String),
+
+    #[error("Other: {0}")]
+    Other(String),
+}
+
+impl From<DownloadError> for AppError {
+    fn from(e: DownloadError) -> Self {
+        match e {
+            DownloadError::Cancelled => AppError::Cancelled,
+            DownloadError::Timeout { secs } => AppError::Timeout(format!("{}s", secs)),
+            DownloadError::DiskFull { need, have } => {
+                AppError::DiskFull(format!("need {} bytes, have {}", need, have))
+            }
+            DownloadError::UrlExpired { status } => {
+                AppError::Download(format!("URL expired (HTTP {})", status))
+            }
+            DownloadError::ChunkShortRead { expected, actual } => AppError::Download(format!(
+                "chunk short read: expected {} got {}",
+                expected, actual
+            )),
+            DownloadError::Network(s) => AppError::Download(format!("network: {}", s)),
+            DownloadError::Io(s) => AppError::Download(format!("io: {}", s)),
+            DownloadError::Other(s) => AppError::Download(s),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DownloadResult {
