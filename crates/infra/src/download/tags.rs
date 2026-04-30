@@ -8,6 +8,31 @@ use tracing::warn;
 
 use netease_domain::model::music_info::MusicInfo;
 
+/// PR-I — async wrapper：lofty 写标签 ~50ms blocking IO，spawn_blocking
+/// 让 tokio runtime 在等待期间继续服务其他请求。同步 `write_music_tags`
+/// 保留供测试/sync 上下文使用。
+pub async fn write_music_tags_async(
+    file_path: &Path,
+    music_info: &MusicInfo,
+    cover_data: Option<&[u8]>,
+) {
+    let file_path = file_path.to_path_buf();
+    let music_info = music_info.clone();
+    let cover_data: Option<Vec<u8>> = cover_data.map(|d| d.to_vec());
+    let _ = tokio::task::spawn_blocking(move || {
+        write_music_tags(&file_path, &music_info, cover_data.as_deref());
+    })
+    .await;
+}
+
+/// PR-I — verify_tags async wrapper（同 write_music_tags_async 思路）。
+pub async fn verify_tags_async(file_path: &Path) -> bool {
+    let file_path = file_path.to_path_buf();
+    tokio::task::spawn_blocking(move || verify_tags(&file_path))
+        .await
+        .unwrap_or(false)
+}
+
 pub fn write_music_tags(file_path: &Path, music_info: &MusicInfo, cover_data: Option<&[u8]>) {
     let ext = file_path
         .extension()

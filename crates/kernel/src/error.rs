@@ -54,7 +54,7 @@ pub enum AppError {
 }
 
 impl AppError {
-    pub fn status_code(&self) -> u16 {
+    pub const fn status_code(&self) -> u16 {
         match self {
             Self::Api(_) => 500,
             Self::Download(_) => 500,

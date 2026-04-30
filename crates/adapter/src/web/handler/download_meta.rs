@@ -14,7 +14,7 @@ use crate::web::state::AppState;
 use netease_domain::model::music_info::{DownloadUrl, MusicInfo};
 use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_infra::download::engine::{download_music_with_metadata, DownloadConfig};
-use netease_infra::download::tags::write_music_tags;
+use netease_infra::download::tags::write_music_tags_async;
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
 
@@ -124,7 +124,7 @@ pub async fn download_with_metadata(
     }
 
     let file_path = result.file_path.as_ref().unwrap();
-    write_music_tags(file_path, &music_info, cover_data.as_deref());
+    write_music_tags_async(file_path, &music_info, cover_data.as_deref()).await;
 
     let tracks = vec![TrackData {
         file_path: file_path.clone(),
@@ -149,6 +149,7 @@ pub async fn download_with_metadata(
 
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        // destructive-audit: exempt — 60s 清理 meta zip，fire-and-forget
         let _ = tokio::fs::remove_file(&zip_path).await;
     });
 

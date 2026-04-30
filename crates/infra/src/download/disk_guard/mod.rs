@@ -94,6 +94,7 @@ pub fn ensure_disk_space(
 
     let mut freed: u64 = 0;
     for file in &plan.to_evict {
+        // destructive-audit: exempt — select_evictions 已 grace check + 显式 plan 决策
         match std::fs::remove_file(&file.path) {
             Ok(()) => {
                 freed = freed.saturating_add(file.size);

@@ -23,7 +23,7 @@ use netease_infra::download::disk_guard;
 use netease_infra::download::engine::{
     download_file_ranged, download_music_file, DownloadConfig, ProgressCallback,
 };
-use netease_infra::download::tags::{verify_tags, write_music_tags};
+use netease_infra::download::tags::{verify_tags_async, write_music_tags_async};
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
 
@@ -172,6 +172,7 @@ pub async fn download_batch(
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(60)).await;
+        // destructive-audit: exempt — 60s 清理批量 zip，fire-and-forget
         let _ = tokio::fs::remove_file(&zip_path).await;
     });
 
@@ -237,16 +238,17 @@ pub async fn download_batch_start(
 const TAG_RETRY_COUNT: usize = 3;
 const TAG_RETRY_DELAYS_MS: [u64; 3] = [200, 500, 1000];
 
-fn write_tags_with_retry(
+// PR-I: async helper —— lofty 写入走 spawn_blocking 不阻塞 runtime；
+//   sleep 改 tokio 异步。
+async fn write_tags_with_retry(
     file_path: &std::path::Path,
     music_info: &netease_domain::model::music_info::MusicInfo,
     cover_data: Option<&[u8]>,
 ) -> bool {
     #[allow(clippy::needless_range_loop)]
-    // PR-1 scope: bootstrap CI; PR-9 worker 上移到 domain 时改用 iter
     for attempt in 0..TAG_RETRY_COUNT {
-        write_music_tags(file_path, music_info, cover_data);
-        if verify_tags(file_path) {
+        write_music_tags_async(file_path, music_info, cover_data).await;
+        if verify_tags_async(file_path).await {
             return true;
         }
         warn!(
@@ -255,7 +257,7 @@ fn write_tags_with_retry(
             attempt + 1,
             TAG_RETRY_COUNT,
         );
-        std::thread::sleep(Duration::from_millis(TAG_RETRY_DELAYS_MS[attempt]));
+        tokio::time::sleep(Duration::from_millis(TAG_RETRY_DELAYS_MS[attempt])).await;
     }
     false
 }
@@ -600,7 +602,7 @@ async fn batch_download_worker(
                     cover_data = state.cover_cache.fetch(client, &music_info.pic_url).await;
                 }
 
-                if !write_tags_with_retry(&file_path, &music_info, cover_data.as_deref()) {
+                if !write_tags_with_retry(&file_path, &music_info, cover_data.as_deref()).await {
                     warn!("Batch: tag write failed after retries for {}", name);
                 }
 

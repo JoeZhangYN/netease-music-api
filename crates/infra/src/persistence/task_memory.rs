@@ -60,6 +60,7 @@ impl InMemoryTaskStore {
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 if age > zip_max_age {
+                    // destructive-audit: exempt — orphan zip 超 zip_max_age 后清理
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -104,6 +105,7 @@ impl TaskStore for InMemoryTaskStore {
         for tid in expired {
             if let Some((_, task)) = self.tasks.remove(&tid) {
                 if let Some(ref path) = task.zip_path {
+                    // destructive-audit: exempt — task TTL 过期后清理对应 zip
                     let _ = std::fs::remove_file(path);
                 }
             }

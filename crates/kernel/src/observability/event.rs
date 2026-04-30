@@ -78,7 +78,7 @@ impl LogEvent {
     /// snake_case wire string. Mirrored by `Serialize` derive but
     /// exposed as `&'static str` for `tracing` field interpolation
     /// without serde overhead.
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             LogEvent::DownloadStarted => "download_started",
             LogEvent::DownloadCompleted => "download_completed",
@@ -144,8 +144,7 @@ mod tests {
             assert_eq!(
                 stripped,
                 variant.as_str(),
-                "as_str must mirror serde wire format for {:?}",
-                variant
+                "as_str must mirror serde wire format for {variant:?}",
             );
         }
     }

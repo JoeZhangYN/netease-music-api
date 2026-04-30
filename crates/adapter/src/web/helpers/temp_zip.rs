@@ -56,6 +56,7 @@ impl Drop for TempZipHandle {
         let delay = self.cleanup_after;
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
+            // destructive-audit: exempt — TempZipHandle Drop RAII 清理，已 delay 防 race
             let _ = tokio::fs::remove_file(&path).await;
         });
     }

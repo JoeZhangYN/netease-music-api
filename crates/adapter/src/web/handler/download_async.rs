@@ -21,7 +21,7 @@ use netease_domain::service::download_service;
 use netease_infra::download::engine::{
     download_music_with_metadata, DownloadConfig, ProgressCallback,
 };
-use netease_infra::download::tags::write_music_tags;
+use netease_infra::download::tags::write_music_tags_async;
 use netease_infra::download::zip::{build_zip_to_file, TrackData};
 use netease_infra::extract_id::extract_music_id;
 
@@ -207,6 +207,7 @@ pub async fn download_result(
     if first_access {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            // destructive-audit: exempt — 5min 后清理临时 zip，fire-and-forget 合理
             let _ = tokio::fs::remove_file(&zip_path_owned).await;
         });
     }
@@ -282,7 +283,7 @@ async fn do_single_download(
     music_id: &str,
     quality: &str,
     metadata: Option<MusicInfo>,
-) -> Result<(), String> {
+) -> Result<(), String> {  // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
     state.task_store.update(
         task_id,
         Box::new(|t| {
@@ -473,7 +474,7 @@ async fn do_single_download(
     );
 
     let file_path = result.file_path.as_ref().unwrap();
-    write_music_tags(file_path, &music_info, cover_data.as_deref());
+    write_music_tags_async(file_path, &music_info, cover_data.as_deref()).await;
 
     let zip_dir = std::env::temp_dir().join("music_api_zips");
     let _ = std::fs::create_dir_all(&zip_dir);

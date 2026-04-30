@@ -28,7 +28,7 @@ use netease_kernel::observability::LogEvent;
 use super::ranged::download_adaptive;
 use super::single_stream::download_single_stream;
 use super::{download_client, part_path_for, DownloadConfig, ProgressCallback};
-use crate::download::tags::write_music_tags;
+use crate::download::tags::write_music_tags_async;
 
 /// Download a file from URL with atomic `.part` staging.
 ///
@@ -133,6 +133,7 @@ pub async fn download_music_file(
             cached_size,
             music_info.file_size
         );
+        // destructive-audit: exempt — PR-3 截断文件清理（cached_size != expected）
         let _ = std::fs::remove_file(&file_path);
     }
 
@@ -179,7 +180,7 @@ pub async fn download_music_file(
     }
     dl_result?;
 
-    write_music_tags(&file_path, &music_info, cover_data.as_deref());
+    write_music_tags_async(&file_path, &music_info, cover_data.as_deref()).await;
 
     let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
     info!(
@@ -230,6 +231,7 @@ pub async fn download_music_with_metadata(
             cached_size,
             music_info.file_size
         );
+        // destructive-audit: exempt — PR-3 截断文件清理
         let _ = std::fs::remove_file(&file_path);
     }
 
@@ -251,7 +253,7 @@ pub async fn download_music_with_metadata(
     .await?;
 
     if do_write_tags {
-        write_music_tags(&file_path, music_info, cover_data);
+        write_music_tags_async(&file_path, music_info, cover_data).await;
     }
 
     let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);

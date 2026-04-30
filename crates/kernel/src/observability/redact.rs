@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn debug_prints_redacted() {
         let secret = Redacted("hunter2".to_string());
-        assert_eq!(format!("{:?}", secret), "[redacted]");
+        assert_eq!(format!("{secret:?}"), "[redacted]");
     }
 
     #[test]
@@ -60,7 +60,7 @@ mod tests {
             password: Redacted("secret".into()),
             user: "alice".into(),
         };
-        let dbg = format!("{:?}", o);
+        let dbg = format!("{o:?}");
         assert!(dbg.contains("[redacted]"));
         assert!(!dbg.contains("secret"));
         assert!(dbg.contains("alice"), "non-secret fields still shown");

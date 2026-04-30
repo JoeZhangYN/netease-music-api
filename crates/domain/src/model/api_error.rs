@@ -57,10 +57,10 @@ impl From<ApiError> for AppError {
             }
             ApiError::AuthExpired => AppError::AuthExpired,
             ApiError::NeteaseCode { code, msg } => {
-                AppError::Api(format!("netease code {}: {}", code, msg))
+                AppError::Api(format!("netease code {code}: {msg}"))
             }
-            ApiError::Network(s) => AppError::Api(format!("network: {}", s)),
-            ApiError::Parse(s) => AppError::Api(format!("parse: {}", s)),
+            ApiError::Network(s) => AppError::Api(format!("network: {s}")),
+            ApiError::Parse(s) => AppError::Api(format!("parse: {s}")),
             ApiError::Other(s) => AppError::Api(s),
         }
     }

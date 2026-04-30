@@ -1,3 +1,7 @@
+// file-size-gate: exempt — FileStatsStore 单 entity（5 stats counter + flush
+//   loop + SSE broadcast）154 SLOC 内聚，按职责拆分会破坏 atomic+mutex
+//   协调语义；待 PR-K 时若再增字段触 200 行才考虑 split
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Mutex;

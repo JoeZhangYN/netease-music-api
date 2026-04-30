@@ -77,10 +77,10 @@ impl Default for RuntimeConfig {
 
 impl RuntimeConfig {
     pub fn load_or_default(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        std::fs::read_to_string(path).map_or_else(
+            |_| Self::default(),
+            |content| serde_json::from_str(&content).unwrap_or_default(),
+        )
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -94,7 +94,7 @@ impl RuntimeConfig {
         Ok(())
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {  // grep-gate-skip: 简单 validation 用 String error 充分；调用方仅 .is_ok() / log
         if self.parse_concurrency < 1 || self.parse_concurrency > 50 {
             return Err("parse_concurrency must be 1..50".into());
         }
@@ -104,7 +104,7 @@ impl RuntimeConfig {
         if self.batch_concurrency < 1 || self.batch_concurrency > 5 {
             return Err("batch_concurrency must be 1..5".into());
         }
-        if self.ranged_threshold < 1048576 {
+        if self.ranged_threshold < 1_048_576 {
             return Err("ranged_threshold must be >= 1MB".into());
         }
         if self.ranged_threads < 1 || self.ranged_threads > 32 {
@@ -137,7 +137,7 @@ impl RuntimeConfig {
         if self.batch_max_songs < 1 || self.batch_max_songs > 500 {
             return Err("batch_max_songs must be 1..500".into());
         }
-        if self.min_free_disk < 104857600 {
+        if self.min_free_disk < 104_857_600 {
             return Err("min_free_disk must be >= 100MB".into());
         }
         if self.download_timeout_per_song_secs < 10 {

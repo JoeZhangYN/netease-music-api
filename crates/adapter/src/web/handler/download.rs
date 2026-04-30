@@ -183,6 +183,7 @@ pub async fn download_music(
 
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        // destructive-audit: exempt — 60s 后清理临时 zip，fire-and-forget 合理
         let _ = tokio::fs::remove_file(&zip_path).await;
     });
 
