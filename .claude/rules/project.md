@@ -97,43 +97,63 @@ docker compose up -d --build        # Docker 部署
 ## Domain SOT Exemptions
 
 `migrate scan --crosscut=domain-sot` 启发式扫描的已知误报豁免段。
-audit-source-of-truth subagent 读此段降噪。新增豁免必须写理由。
+audit-source-of-truth subagent + PreToolUse `domain_sot_gate` + aggregate.rs 三消费者同读此段。
+
+> **匹配机制**：pattern 用 **substring contains**（非 regex）。aggregate.rs 在 raw 阶段
+> 过滤：`it.detail.contains(p) || it.name.contains(p)`。用 raw `IndexItem.name` 编码
+> （`<kind>:<key>`，如 `field_compare:stage` / `write_call:save` / `normalize_call:trim+to_lowercase`）
+> 精确命中，避免 file 维度（aggregate 不看 it.file 字段）。
 
 ```yaml
 # multi_write_path 误报：admin.rs 涉及 N entity 持久化（cookie / stats /
-# config / cover_cache / task / hooks-log），不同 entity 有独立写入路径，
-# 合并会破坏分层。
-- pattern: 'multi_write_path.*admin\.rs'
-  reason: "多 entity 持久化路径，按聚合根分离合理"
+# config / cover_cache / task / hooks-log），不同 entity 有独立写入路径。
+# 注：用 method 维度豁免（write_call:save 等）—— aggregate 不支持 file-level
+# substring；如需仅豁免 admin.rs 应用 file-level marker `// domain-sot-gate: exempt`。
+- pattern: 'write_call:save'
+  reason: "多 entity 持久化路径合理；admin.rs 内 save 不计漂移"
+- pattern: 'write_call:store'
+  reason: "同上"
+- pattern: 'write_call:persist'
+  reason: "同上"
 
-# concurrency 字段三处比较误报：admin handler 内 validate(rc) +
-# state.parse_semaphore_cap.store() 两处比较是 validate-vs-apply 双语义，
-# 合并会丢失"先校验再生效"的双重保护。
-- pattern: 'repeated_comparison.*field=(parse|download|batch)_concurrency'
+# concurrency 三字段：validate(rc) + state.parse_semaphore_cap.store() 双语义
+- pattern: 'field_compare:batch_concurrency'
+  reason: "validate-then-apply 双语义比较，合理保留"
+- pattern: 'field_compare:download_concurrency'
+  reason: "validate-then-apply 双语义比较，合理保留"
+- pattern: 'field_compare:parse_concurrency'
   reason: "validate-then-apply 双语义比较，合理保留"
 
-# file_type=flac 误报：music_info.rs determine_file_extension 用字符串
-# 是 v3 妥协。v4 plan 已列入 typestate (FileType enum) 重构项。
-- pattern: 'repeated_comparison.*field=flac'
+# file_type=flac：music_info.rs determine_file_extension 用字符串是 v3 妥协。
+# v4 plan 已列入 typestate (FileType enum) 重构项。
+- pattern: 'field_compare:flac'
   reason: "v4 deferred — typestate FileType enum 整体替换"
 
-# created_at 误报：task_memory.rs TTL 检查（now - created_at > ttl）+
-# 测试断言两处。语义不同，不合并。
-- pattern: 'repeated_comparison.*field=created_at'
+# created_at：task_memory.rs TTL 检查（now - created_at > ttl）+ 测试断言两处。
+- pattern: 'field_compare:created_at'
   reason: "TTL check vs test assertion, 不同语义"
 
-# rate_limit_burst 误报：runtime_config.rs validate() 内 +
-# tests/runtime_config_validate.rs proptest 计算 effective_burst。
-# 合理保留——配置规则在 SOT，测试单独验证。
-- pattern: 'repeated_comparison.*field=rate_limit_burst'
+# rate_limit_burst：runtime_config.rs validate() + tests/proptest 各自合理。
+- pattern: 'field_compare:rate_limit_burst'
   reason: "validate 单源 + proptest 跨字段约束，合理"
 
-# album/playlist/search trim+to_lowercase 16 处：handler 入参标准化散布。
-# 跨 N 路由的输入清洗，每路由参数语义不同（album_id / playlist_id /
-# search_keyword），共用 helper 风险大于收益。
-- pattern: 'repeated_normalize.*album\.rs'
+# album/playlist/search 入参标准化 trim+to_lowercase 散布。每路由参数语义不同。
+- pattern: 'normalize_call:trim+to_lowercase'
   reason: "多路由入参标准化各有语义，不合并"
+
+# stage 字段：v4 PR-D 已抽 TaskStage::is_reusable_for_dedup /
+# is_downloadable_to_user helpers 集中判断。剩余 `task.stage == TaskStage::Done` /
+# `t.stage = TaskStage::X` 状态机赋值/比较是 type-driven enum 正模式
+# （TaskStage enum 穷尽合法状态），抽 setter 无价值（与直接赋值等价）。
+- pattern: 'field_compare:stage'
+  reason: "state-machine field（TaskStage enum 穷尽）— type-driven 正模式，PR-D 已抽 helpers"
 ```
 
-> **未豁免的真问题** (PR-D 已修)：`stage` 状态比较散布 → 抽
-> `TaskStage::is_reusable_for_dedup` / `is_downloadable_to_user` helper。
+> **历史**：`stage` 真漂移已在 v4 PR-D 修完（抽了 `TaskStage::is_reusable_for_dedup` /
+> `is_downloadable_to_user` helpers 集中状态判断）。剩余 detector 命中是 type-driven
+> enum 状态机正模式，已上方 Exemption 豁免。
+>
+> **修订（v3.10）**：之前 pattern 写成 `'<kind>.*<field>'` regex 形式但 aggregate 用
+> substring contains（非 regex），全部失效。改为 raw `IndexItem.name` 编码精确命中
+> （`field_compare:stage` 等），三消费者（migrate scan / audit / PreToolUse gate）共用同一
+> exemptions SOT 后立即生效。
