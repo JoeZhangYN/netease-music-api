@@ -1,16 +1,31 @@
 //! PR-8 — non-ranged GET → file path. Used directly for files below
 //! the ranged threshold (default 5MB) and as fallback when the server
 //! does not support Range or the probe fails.
+//!
+//! PR-C: 内联 retry 循环迁移到 `crate::http::retry::with_retry`，
+//! 复用 `DEFAULT_BACKOFF` 单源退避表。语义保留：所有错误都被视为
+//! 瞬态可重试（与 pre-PR-C 行为等价）。
 
 use std::path::Path;
 use std::time::Duration;
 
 use reqwest::Client;
-use tracing::warn;
 
 use netease_kernel::error::AppError;
 
-use super::{ProgressCallback, RETRY_DELAYS_MS};
+use crate::http::{with_retry, HttpFailureKind, RetryPolicy, DEFAULT_BACKOFF};
+
+use super::ProgressCallback;
+
+/// AppError → HttpFailureKind 映射。`Cancelled` 不重试，其它视为可重试瞬态。
+fn classify(e: AppError) -> HttpFailureKind {
+    match e {
+        AppError::Cancelled => HttpFailureKind::Permanent4xx { status: 499 },
+        AppError::Timeout(_) => HttpFailureKind::Timeout,
+        AppError::DiskFull(_) => HttpFailureKind::Permanent4xx { status: 507 },
+        other => HttpFailureKind::Network(other.to_string()),
+    }
+}
 
 pub(super) async fn download_single_stream(
     client: &Client,
@@ -20,21 +35,21 @@ pub(super) async fn download_single_stream(
     on_progress: Option<ProgressCallback>,
     max_retries: usize,
 ) -> Result<(), AppError> {
-    for attempt in 0..max_retries {
-        match download_stream_once(client, url, file_path, content_length, &on_progress).await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if attempt < max_retries - 1 {
-                    warn!("Download attempt {} failed: {} - retrying", attempt + 1, e);
-                    let delay_idx = attempt.min(RETRY_DELAYS_MS.len() - 1);
-                    tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[delay_idx])).await;
-                    continue;
-                }
-                return Err(e);
-            }
-        }
-    }
-    unreachable!()
+    let n = max_retries.min(DEFAULT_BACKOFF.len()).max(1);
+    let backoff: Vec<Duration> = DEFAULT_BACKOFF
+        .iter()
+        .take(n.saturating_sub(1)) // backoff len = attempts-1
+        .map(|ms| Duration::from_millis(*ms))
+        .collect();
+    let policy = RetryPolicy { backoff };
+
+    with_retry(&policy, || async {
+        download_stream_once(client, url, file_path, content_length, &on_progress)
+            .await
+            .map_err(classify)
+    })
+    .await
+    .map_err(|kind| AppError::Download(kind.to_string()))
 }
 
 async fn download_stream_once(

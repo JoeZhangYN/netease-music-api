@@ -142,6 +142,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-C — engine retry migration to `with_retry` (SOT cleanup).**
+  Completes the http retry infrastructure consolidation started in PR-A:
+  - `engine/single_stream.rs::download_single_stream` 内联 retry 循环
+    替换为 `crate::http::with_retry` + `RetryPolicy`，复用单源
+    `DEFAULT_BACKOFF` 退避表。
+  - `engine/ranged.rs` parallel chunk fetch 内的 retry 循环同样迁移。
+    Short-read 与 fetch_range Err 统一映射为
+    `HttpFailureKind::Network`（可重试瞬态），与 pre-PR-C 行为等价。
+  - **`engine::RETRY_DELAYS_MS` 别名彻底删除**（invariant #17）。
+    pre-PR-A 此处与 `client.rs::RETRY_DELAYS_MS` 是两份独立常量
+    （3 阶 vs 5 阶不一致），PR-A 收敛为别名，PR-C 删尽。`AppError →
+    HttpFailureKind` classify helper 保留 `Cancelled` / `Timeout` /
+    `DiskFull` 不重试语义。
+  - 行为不变（所有错误仍被视为可重试瞬态，与 pre-PR-C 等价），
+    单纯 SOT §3.2 收尾。
+  - 209+ tests 全过，无回归。
+  - 注：`netease/client.rs::RETRY_DELAYS_MS` (3 阶) 仍未迁移——它由
+    旧的 `request_with_retry` 使用，下次重构时再统一到
+    `with_retry`（现状已在 PR-A 加注释标 SOT 关系）。
+
 - **PR-B — Quality fallback + ApiError + token-bucket rate limit.**
   Addresses three user-reported pain points (and lays the foundation
   for PR-C download-side migration):

@@ -26,12 +26,9 @@ mod wrapper;
 
 pub use wrapper::{download_file_ranged, download_music_file, download_music_with_metadata};
 
-/// Retry backoff schedule (milliseconds). Shared across single-stream
-/// and ranged paths.
-///
-/// PR-A: SOT 收敛点 → `crate::http::DEFAULT_BACKOFF`。本 const 保留为
-/// 转发别名，PR-C 完成 single_stream/ranged 迁移后删除。
-pub(crate) const RETRY_DELAYS_MS: [u64; 5] = crate::http::DEFAULT_BACKOFF;
+// PR-C: RETRY_DELAYS_MS 别名已删除。退避表唯一 SOT 在
+// `crate::http::DEFAULT_BACKOFF`，single_stream/ranged 通过 `with_retry`
+// 消费。引用 RETRY_DELAYS_MS 的代码在 PR-C 全部迁移到 `RetryPolicy`。
 
 #[derive(Debug, Clone)]
 pub struct DownloadConfig {

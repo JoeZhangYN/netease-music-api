@@ -1,6 +1,9 @@
 // file-size-gate: exempt PR-8 — ranged path is naturally cohesive (probe + assembly + fetch_range), splitting further into 2 files reduces local readability without adding clarity
 
 //! PR-8 — Range probe + parallel chunk download + assembly.
+//!
+//! PR-C: 每分块 fetch 的内联 retry 循环迁移到 `crate::http::retry::with_retry`，
+//! 复用 `DEFAULT_BACKOFF` 单源退避表。Short-read 视为可重试 Network。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,8 +16,21 @@ use tracing::warn;
 
 use netease_kernel::error::AppError;
 
+use crate::http::{with_retry, HttpFailureKind, RetryPolicy, DEFAULT_BACKOFF};
+
 use super::single_stream::{download_single_stream, stream_response_to_file};
-use super::{DownloadConfig, ProgressCallback, RETRY_DELAYS_MS};
+use super::{DownloadConfig, ProgressCallback};
+
+/// 构造与 max_retries 配套的 RetryPolicy（取 DEFAULT_BACKOFF 前 N-1 阶）。
+fn build_policy(max_retries: usize) -> RetryPolicy {
+    let n = max_retries.min(DEFAULT_BACKOFF.len()).max(1);
+    let backoff: Vec<Duration> = DEFAULT_BACKOFF
+        .iter()
+        .take(n.saturating_sub(1))
+        .map(|ms| Duration::from_millis(*ms))
+        .collect();
+    RetryPolicy { backoff }
+}
 
 /// For large files: first Range GET doubles as probe and first chunk download.
 /// If 206 → Range supported, download remaining chunks in parallel.
@@ -129,58 +145,53 @@ async fn download_remaining_and_assemble(
         let results = results.clone();
         let cl = content_length;
 
+        let policy = build_policy(max_retries);
         handles.push(tokio::spawn(async move {
             let expected_len = end - start + 1;
-            for attempt in 0..max_retries {
+            // PR-C: with_retry 替换内联 retry 循环。Short-read / fetch_range Err
+            // 都映射为 HttpFailureKind::Network 视为可重试瞬态（与 pre-PR-C 等价）。
+            let result: Result<Vec<u8>, HttpFailureKind> = with_retry(&policy, || async {
                 match fetch_range(&client, &url, start, end).await {
+                    Ok(data) if (data.len() as u64) == expected_len => Ok(data),
                     Ok(data) => {
-                        let actual_len = data.len() as u64;
-                        // PR-3: chunk length validation.
-                        if actual_len != expected_len {
-                            warn!(
-                                "Range chunk short read: expected {} bytes [{}..{}], got {} (attempt {}/{})",
-                                expected_len, start, end, actual_len, attempt + 1, max_retries
-                            );
-                            if attempt < max_retries - 1 {
-                                let delay_idx = attempt.min(RETRY_DELAYS_MS.len() - 1);
-                                tokio::time::sleep(Duration::from_millis(
-                                    RETRY_DELAYS_MS[delay_idx],
-                                ))
-                                .await;
-                                continue;
-                            }
-                            return Err(AppError::Download(format!(
-                                "Range chunk short read after {} retries: \
-                                 expected {} bytes [{}..{}], got {}",
-                                max_retries, expected_len, start, end, actual_len
-                            )));
-                        }
-
-                        downloaded_total
-                            .fetch_add(actual_len, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(ref cb) = on_progress {
-                            cb(
-                                downloaded_total.load(std::sync::atomic::Ordering::Relaxed),
-                                cl,
-                            );
-                        }
-                        results.lock().await.insert(start, data);
-                        return Ok(());
+                        warn!(
+                            "Range chunk short read: expected {} bytes [{}..{}], got {}",
+                            expected_len,
+                            start,
+                            end,
+                            data.len()
+                        );
+                        Err(HttpFailureKind::Network(format!(
+                            "short read [{}..{}]: expected {} got {}",
+                            start,
+                            end,
+                            expected_len,
+                            data.len()
+                        )))
                     }
-                    Err(e) => {
-                        if attempt < max_retries - 1 {
-                            let delay_idx = attempt.min(RETRY_DELAYS_MS.len() - 1);
-                            tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[delay_idx]))
-                                .await;
-                            continue;
-                        }
-                        return Err(e);
-                    }
+                    Err(e) => Err(HttpFailureKind::Network(e.to_string())),
                 }
+            })
+            .await;
+
+            match result {
+                Ok(data) => {
+                    let actual_len = data.len() as u64;
+                    downloaded_total.fetch_add(actual_len, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(ref cb) = on_progress {
+                        cb(
+                            downloaded_total.load(std::sync::atomic::Ordering::Relaxed),
+                            cl,
+                        );
+                    }
+                    results.lock().await.insert(start, data);
+                    Ok(())
+                }
+                Err(kind) => Err(AppError::Download(format!(
+                    "Range chunk [{}..{}] failed: {}",
+                    start, end, kind
+                ))),
             }
-            Err(AppError::Download(
-                "Range download failed after retries".into(),
-            ))
         }));
     }
 
