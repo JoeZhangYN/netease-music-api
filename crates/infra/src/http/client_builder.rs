@@ -55,7 +55,10 @@ mod tests {
 
     #[test]
     fn parse_profile_has_5s_connect_10s_read() {
-        assert_eq!(ClientProfile::Parse.connect_timeout(), Duration::from_secs(5));
+        assert_eq!(
+            ClientProfile::Parse.connect_timeout(),
+            Duration::from_secs(5)
+        );
         assert_eq!(ClientProfile::Parse.read_timeout(), Duration::from_secs(10));
     }
 

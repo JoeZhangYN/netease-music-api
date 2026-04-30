@@ -94,7 +94,8 @@ impl RuntimeConfig {
         Ok(())
     }
 
-    pub fn validate(&self) -> Result<(), String> {  // grep-gate-skip: 简单 validation 用 String error 充分；调用方仅 .is_ok() / log
+    pub fn validate(&self) -> Result<(), String> {
+        // grep-gate-skip: 简单 validation 用 String error 充分；调用方仅 .is_ok() / log
         if self.parse_concurrency < 1 || self.parse_concurrency > 50 {
             return Err("parse_concurrency must be 1..50".into());
         }

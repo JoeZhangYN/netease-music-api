@@ -81,10 +81,7 @@ mod tests {
             AppError::UrlUnavailable(id) => assert_eq!(id, 12345),
             _ => panic!("expected UrlUnavailable"),
         }
-        assert_eq!(
-            AppError::UrlUnavailable(12345).status_code(),
-            502
-        );
+        assert_eq!(AppError::UrlUnavailable(12345).status_code(), 502);
     }
 
     #[test]

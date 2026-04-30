@@ -132,8 +132,7 @@ mod tests {
 
     #[test]
     fn from_response_5xx_maps_to_server_error() {
-        let kind =
-            HttpFailureKind::from_response(StatusCode::INTERNAL_SERVER_ERROR, b"").unwrap();
+        let kind = HttpFailureKind::from_response(StatusCode::INTERNAL_SERVER_ERROR, b"").unwrap();
         matches!(kind, HttpFailureKind::Server5xx { status: 500 });
     }
 
@@ -149,7 +148,10 @@ mod tests {
         let body = br#"{"code":-460,"msg":"Cheating"}"#;
         let kind = HttpFailureKind::from_response(StatusCode::OK, body);
         // 200 默认 None，需要在 retry 层主动调 from_response 检查 body
-        assert!(kind.is_none(), "200 status alone returns None — caller peek body");
+        assert!(
+            kind.is_none(),
+            "200 status alone returns None — caller peek body"
+        );
     }
 
     #[test]

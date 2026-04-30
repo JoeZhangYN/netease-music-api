@@ -219,9 +219,9 @@ async fn download_remaining_and_pwrite(
                                 start, end, e
                             ))
                         })?;
-                    f.seek(SeekFrom::Start(start)).await.map_err(|e| {
-                        AppError::Download(format!("seek {} failed: {}", start, e))
-                    })?;
+                    f.seek(SeekFrom::Start(start))
+                        .await
+                        .map_err(|e| AppError::Download(format!("seek {} failed: {}", start, e)))?;
                     f.write_all(&data).await.map_err(|e| {
                         AppError::Download(format!("pwrite [{}..{}]: {}", start, end, e))
                     })?;

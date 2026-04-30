@@ -19,10 +19,7 @@ use super::policy::RetryPolicy;
 /// - 其它 → sleep(backoff or retry_after) 重试
 ///
 /// `Quota.retry_after` 优先使用（尊重服务端建议）。
-pub async fn with_retry<F, Fut, T>(
-    policy: &RetryPolicy,
-    op: F,
-) -> Result<T, HttpFailureKind>
+pub async fn with_retry<F, Fut, T>(policy: &RetryPolicy, op: F) -> Result<T, HttpFailureKind>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, HttpFailureKind>>,

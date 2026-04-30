@@ -253,9 +253,15 @@ mod tests {
     fn ladder_terminates_at_floor() {
         // Hires → Lossless → Exhigh → Standard，floor=Standard 全 4 项
         let v: Vec<Quality> = Quality::ladder(Quality::Hires, Quality::Standard).collect();
-        assert_eq!(v, vec![
-            Quality::Hires, Quality::Lossless, Quality::Exhigh, Quality::Standard
-        ]);
+        assert_eq!(
+            v,
+            vec![
+                Quality::Hires,
+                Quality::Lossless,
+                Quality::Exhigh,
+                Quality::Standard
+            ]
+        );
     }
 
     #[test]
@@ -268,7 +274,12 @@ mod tests {
     #[test]
     fn ladder_skips_premium_qualities() {
         // Attacker：付费内容不参与 fallback，premium start 只产 [start] 不降级
-        for premium in [Quality::Sky, Quality::Jyeffect, Quality::Jymaster, Quality::Dolby] {
+        for premium in [
+            Quality::Sky,
+            Quality::Jyeffect,
+            Quality::Jymaster,
+            Quality::Dolby,
+        ] {
             let v: Vec<Quality> = Quality::ladder(premium, Quality::Standard).collect();
             assert_eq!(v, vec![premium], "premium {:?} 不应降级", premium);
         }

@@ -78,9 +78,7 @@ pub async fn resolve_url_with_fallback(
             Err(e) => return Err(e), // 其它错误立刻冒泡（不试更低 quality）
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        AppError::UrlUnavailable(music_id.parse().unwrap_or(0))
-    }))
+    Err(last_err.unwrap_or_else(|| AppError::UrlUnavailable(music_id.parse().unwrap_or(0))))
 }
 
 pub async fn handle_url(

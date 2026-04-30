@@ -136,12 +136,11 @@ async fn main() {
     ));
     // PR-B: 装饰 NeteaseApi → RateLimitedMusicApi。
     // GovernorLimiter 按 (host, MUSIC_U[0:8]) 分桶，rps=0 时退化为禁用限流。
-    let rate_limiter: Arc<dyn netease_infra::http::RateLimiter> = Arc::new(
-        netease_infra::http::GovernorLimiter::new(
+    let rate_limiter: Arc<dyn netease_infra::http::RateLimiter> =
+        Arc::new(netease_infra::http::GovernorLimiter::new(
             rc.rate_limit_rps_per_user.max(1),
             rc.rate_limit_burst.max(rc.rate_limit_rps_per_user.max(1)),
-        ),
-    );
+        ));
     let music_api: Arc<dyn netease_domain::port::music_api::MusicApi> =
         Arc::new(netease_infra::http::RateLimitedMusicApi::new(
             NeteaseApi::new(http_client.clone()),
@@ -281,7 +280,13 @@ async fn main() {
                 eprintln!("  端口已被其他进程占用。处理方法：");
                 eprintln!("    1. 查谁占了：  netstat -ano | findstr :{}", addr.port());
                 eprintln!("    2. 杀掉进程：  taskkill /PID <PID> /F");
-                eprintln!("    3. 或改端口：  set PORT=5050 && {}", std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "netease-music-api.exe".into()));
+                eprintln!(
+                    "    3. 或改端口：  set PORT=5050 && {}",
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .unwrap_or_else(|| "netease-music-api.exe".into())
+                );
             }
             eprintln!("============================================================");
             // 双击 .exe 双击场景：stdin 是 console 时暂停防闪退，让用户看到错误
@@ -321,7 +326,10 @@ fn pause_if_double_click() {
         // GetConsoleProcessList 返 1 = 仅本进程的 console（双击启动），>1 = 父 shell 持有
         use std::os::raw::c_ulong;
         unsafe extern "system" {
-            fn GetConsoleProcessList(lpdwProcessList: *mut c_ulong, dwProcessCount: c_ulong) -> c_ulong;
+            fn GetConsoleProcessList(
+                lpdwProcessList: *mut c_ulong,
+                dwProcessCount: c_ulong,
+            ) -> c_ulong;
         }
         let mut pids = [0u32; 2];
         let n = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), 2) };

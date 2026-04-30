@@ -91,9 +91,9 @@ impl MusicApi for NeteaseApi {
             return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
-        let song_data = result.pointer("/data/0").ok_or_else(|| {
-            AppError::from(ApiError::Parse("missing /data/0 in response".into()))
-        })?;
+        let song_data = result
+            .pointer("/data/0")
+            .ok_or_else(|| AppError::from(ApiError::Parse("missing /data/0 in response".into())))?;
         // PR-B: from_api_response 返 None = url 为空 → UrlEmpty 让 fallback 决策
         match SongUrlData::from_api_response(song_data) {
             Some(d) => Ok(d),

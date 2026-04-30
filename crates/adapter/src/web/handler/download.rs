@@ -85,7 +85,8 @@ pub async fn download_music(
 
     let rc = state.runtime_config.load();
     let dl_config = DownloadConfig::from_runtime_config(&rc);
-    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc);
+    let fallback_cfg =
+        netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc);
     drop(rc);
 
     // PR-E: 下载侧 CDN 速率护栏（共享 limiter，host=cdn 与 API 域分桶）

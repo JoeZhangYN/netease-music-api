@@ -67,7 +67,10 @@ pub async fn download_batch(
 
     let rc_snapshot = state.runtime_config.load();
     let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
-    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc_snapshot);
+    let fallback_cfg =
+        netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
+            &rc_snapshot,
+        );
     drop(rc_snapshot);
 
     // Resolve and dedup IDs
@@ -292,7 +295,10 @@ async fn batch_download_worker(
     let client = &state.http_client;
     let rc_snapshot = state.runtime_config.load();
     let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
-    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc_snapshot);
+    let fallback_cfg =
+        netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
+            &rc_snapshot,
+        );
     let download_timeout = rc_snapshot.download_timeout_per_song_secs;
     drop(rc_snapshot);
 
@@ -461,7 +467,10 @@ async fn batch_download_worker(
             prefetch_n_plus_1 = Some(spawn_prefetch(ids[i + 1].clone(), half_triggered.clone()));
         }
         if prefetch_n_plus_2.is_none() && i + 2 < ids.len() {
-            prefetch_n_plus_2 = Some(spawn_prefetch(ids[i + 2].clone(), quarter_triggered.clone()));
+            prefetch_n_plus_2 = Some(spawn_prefetch(
+                ids[i + 2].clone(),
+                quarter_triggered.clone(),
+            ));
         }
 
         // --- Download phase ---

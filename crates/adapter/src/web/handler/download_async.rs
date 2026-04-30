@@ -283,7 +283,8 @@ async fn do_single_download(
     music_id: &str,
     quality: &str,
     metadata: Option<MusicInfo>,
-) -> Result<(), String> {  // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
+) -> Result<(), String> {
+    // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
     state.task_store.update(
         task_id,
         Box::new(|t| {
@@ -296,9 +297,10 @@ async fn do_single_download(
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
     let api = state.music_api.as_ref();
-    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
-        &state.runtime_config.load(),
-    );
+    let fallback_cfg =
+        netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
+            &state.runtime_config.load(),
+        );
     // PR-E: 下载侧 CDN 速率护栏（共享 limiter，host=cdn 与 API 域分桶）
     let cdn_key = netease_infra::http::RateLimitKey {
         host: "cdn".into(),

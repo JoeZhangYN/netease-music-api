@@ -105,10 +105,9 @@ pub async fn download_music_file(
     trace_id: &str,
 ) -> Result<DownloadResult, AppError> {
     let cookies = cookie_store.parse().unwrap_or_default();
-    let music_info = download_service::get_music_info(
-        api, music_id, quality, &cookies, fallback_cfg, trace_id,
-    )
-    .await?;
+    let music_info =
+        download_service::get_music_info(api, music_id, quality, &cookies, fallback_cfg, trace_id)
+            .await?;
     let file_path = build_file_path(downloads_dir, &music_info, quality);
 
     if let Some(parent) = file_path.parent() {
