@@ -62,6 +62,9 @@ use netease_kernel::runtime_config::RuntimeConfig;
 
 #[tokio::main]
 async fn main() {
+    // Windows console: UTF-8 输出（默认 GBK 936 会让中文乱码）
+    set_console_utf8();
+
     let config = AppConfig::from_env();
 
     let _ = std::fs::create_dir_all(&config.logs_dir);
@@ -266,11 +269,68 @@ async fn main() {
 
     info!("Starting server on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind address");
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!();
+            eprintln!("============================================================");
+            eprintln!("  ❌ 启动失败：无法绑定 {}", addr);
+            eprintln!("  原因：{}", e);
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!();
+                eprintln!("  端口已被其他进程占用。处理方法：");
+                eprintln!("    1. 查谁占了：  netstat -ano | findstr :{}", addr.port());
+                eprintln!("    2. 杀掉进程：  taskkill /PID <PID> /F");
+                eprintln!("    3. 或改端口：  set PORT=5050 && {}", std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "netease-music-api.exe".into()));
+            }
+            eprintln!("============================================================");
+            // 双击 .exe 双击场景：stdin 是 console 时暂停防闪退，让用户看到错误
+            pause_if_double_click();
+            std::process::exit(1);
+        }
+    };
 
-    axum::serve(listener, app).await.expect("Server failed");
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("\n❌ 服务运行错误：{}", e);
+        pause_if_double_click();
+        std::process::exit(1);
+    }
+}
+
+/// Windows console: 把 stdout/stderr code page 设为 UTF-8 (CP 65001)。
+/// 默认 GBK (936) / Latin-1 在中文 Windows 会让 Rust UTF-8 字面量乱码。
+fn set_console_utf8() {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn SetConsoleOutputCP(wCodePageID: u32) -> i32;
+            fn SetConsoleCP(wCodePageID: u32) -> i32;
+        }
+        unsafe {
+            SetConsoleOutputCP(65001);
+            SetConsoleCP(65001);
+        }
+    }
+}
+
+/// 检测进程是否由双击 .exe 启动（无附加 cmd 窗口）：若是，等待按键防闪退。
+/// 从 cmd / shell 跑直接 return（用户已在 console 能看到错误）。
+fn pause_if_double_click() {
+    #[cfg(windows)]
+    {
+        // GetConsoleProcessList 返 1 = 仅本进程的 console（双击启动），>1 = 父 shell 持有
+        use std::os::raw::c_ulong;
+        unsafe extern "system" {
+            fn GetConsoleProcessList(lpdwProcessList: *mut c_ulong, dwProcessCount: c_ulong) -> c_ulong;
+        }
+        let mut pids = [0u32; 2];
+        let n = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), 2) };
+        if n <= 1 {
+            eprintln!();
+            eprintln!("按任意键退出...");
+            let _ = std::io::stdin().read_line(&mut String::new());
+        }
+    }
 }
 
 fn cleanup_old_files(dir: &std::path::Path, max_age_secs: u64) {
