@@ -298,6 +298,12 @@ async fn do_single_download(
     let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
         &state.runtime_config.load(),
     );
+    // PR-E: 下载侧 CDN 速率护栏（共享 limiter，host=cdn 与 API 域分桶）
+    let cdn_key = netease_infra::http::RateLimitKey {
+        host: "cdn".into(),
+        user: netease_infra::http::extract_user_key(&cookies),
+    };
+    let _ = state.rate_limiter.acquire(&cdn_key).await;
 
     let music_info = if let Some(mut meta) = metadata {
         // PR-6: get_song_url returns typed SongUrlData; no more .pointer()

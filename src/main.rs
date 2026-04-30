@@ -164,6 +164,7 @@ async fn main() {
         config: config.clone(),
         http_client,
         music_api,
+        rate_limiter: rate_limiter.clone(),
         cookie_store,
         task_store: task_store.clone(),
         stats,

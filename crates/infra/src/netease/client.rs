@@ -1,24 +1,55 @@
-// file-size-gate: exempt PR-1 (CI bootstrap); PR-8 retry 策略重构时拆 retry.rs / cookie_merge.rs
+// file-size-gate: exempt PR-E — HttpClient 4 method (request_with_retry +
+//   post_eapi + post_form + get_json) 同主题协议封装；拆分等于把单一抽象切片
+//
+// PR-E: 整段迁移到 `crate::http::with_retry` + `HttpFailureKind`，删除内部
+//   独立 RETRY_DELAYS_MS / MAX_RETRIES。HttpFailureKind 现自动覆盖
+//   is_body / is_decode / is_request 等 pre-PR-E 漏的网络错；401 自动识别为
+//   AuthExpired 不重试。HTTP 200 + 网易云风控 code (-460/-461/-301) 仍由
+//   上游 api.rs::get_song_url 解析（body code 不在 HTTP 层捕获）。
 
 use std::collections::HashMap;
-use std::time::Duration;
 
-use reqwest::{Client, Response, StatusCode};
-use tracing::warn;
+use reqwest::{Client, RequestBuilder, Response};
 
 use super::types::{default_cookies, REFERER, USER_AGENT};
 use netease_kernel::error::AppError;
 
-// PR-A: 数值与 `crate::http::DEFAULT_BACKOFF` 前 3 阶一致（SOT 收敛点）。
-// PR-B 完整迁移到 `crate::http::with_retry` + `HttpFailureKind` 时本块删除。
-const MAX_RETRIES: usize = 3;
-const RETRY_DELAYS_MS: [u64; 3] = [500, 1000, 2000];
+use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 
 pub struct HttpClient;
 
 impl HttpClient {
-    fn is_retryable_status(status: StatusCode) -> bool {
-        status.is_server_error()
+    /// 构造单次请求（每次 retry 重新构造，因为 reqwest::RequestBuilder send 后 consume）。
+    fn build_request(
+        client: &Client,
+        method: &reqwest::Method,
+        url: &str,
+        form_data: Option<&[(String, String)]>,
+        headers: Option<&HashMap<String, String>>,
+        cookies: Option<&HashMap<String, String>>,
+    ) -> RequestBuilder {
+        let mut req = client.request(method.clone(), url);
+        if let Some(hdr) = headers {
+            for (k, v) in hdr {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+        let mut merged = default_cookies();
+        if let Some(user_cookies) = cookies {
+            for (k, v) in user_cookies {
+                merged.insert(k.clone(), v.clone());
+            }
+        }
+        let cookie_str: String = merged
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("; ");
+        req = req.header("Cookie", cookie_str);
+        if let Some(data) = form_data {
+            req = req.form(data);
+        }
+        req
     }
 
     pub async fn request_with_retry(
@@ -29,77 +60,43 @@ impl HttpClient {
         headers: Option<HashMap<String, String>>,
         cookies: Option<&HashMap<String, String>>,
     ) -> Result<Response, AppError> {
-        let mut last_err = None;
+        let policy = RetryPolicy::default_for_profile(ClientProfile::Parse);
+        let result = with_retry(&policy, || async {
+            let resp = Self::build_request(
+                client,
+                &method,
+                url,
+                form_data.as_deref(),
+                headers.as_ref(),
+                cookies,
+            )
+            .send()
+            .await
+            .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
-        #[allow(clippy::needless_range_loop)]
-        // PR-1 scope: bootstrap CI; PR-8 重构 retry 策略时改用 iter
-        for attempt in 0..MAX_RETRIES {
-            let mut req = client.request(method.clone(), url);
-
-            if let Some(ref hdr) = headers {
-                for (k, v) in hdr {
-                    req = req.header(k.as_str(), v.as_str());
-                }
+            let status = resp.status();
+            if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                return Ok(resp);
             }
+            // 失败路径：peek body 让 HttpFailureKind 识别 401+deactivated 等。
+            // body 限 200 字节防 OOM。
+            let body = resp
+                .bytes()
+                .await
+                .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
+            let peek = &body[..body.len().min(200)];
+            Err(HttpFailureKind::from_response(status, peek)
+                .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {}", status))))
+        })
+        .await;
 
-            let mut merged = default_cookies();
-            if let Some(user_cookies) = cookies {
-                for (k, v) in user_cookies {
-                    merged.insert(k.clone(), v.clone());
-                }
+        result.map_err(|kind| match kind {
+            HttpFailureKind::AuthExpired => AppError::AuthExpired,
+            HttpFailureKind::Quota { retry_after } => {
+                AppError::RateLimited(retry_after.map(|d| d.as_secs()))
             }
-            let cookie_str: String = merged
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("; ");
-            req = req.header("Cookie", cookie_str);
-
-            if let Some(ref data) = form_data {
-                req = req.form(data);
-            }
-
-            match req.send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() || resp.status() == StatusCode::PARTIAL_CONTENT {
-                        return Ok(resp);
-                    }
-                    if Self::is_retryable_status(resp.status()) && attempt < MAX_RETRIES - 1 {
-                        warn!(
-                            "HTTP {} - retrying in {}ms (attempt {}/{})",
-                            resp.status(),
-                            RETRY_DELAYS_MS[attempt],
-                            attempt + 1,
-                            MAX_RETRIES
-                        );
-                        tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[attempt])).await;
-                        last_err = Some(format!("HTTP {}", resp.status()));
-                        continue;
-                    }
-                    return Err(AppError::Api(format!(
-                        "HTTP request failed: {}",
-                        resp.status()
-                    )));
-                }
-                Err(e) => {
-                    if (e.is_timeout() || e.is_connect()) && attempt < MAX_RETRIES - 1 {
-                        warn!(
-                            "Request error: {} - retrying in {}ms",
-                            e, RETRY_DELAYS_MS[attempt]
-                        );
-                        tokio::time::sleep(Duration::from_millis(RETRY_DELAYS_MS[attempt])).await;
-                        last_err = Some(e.to_string());
-                        continue;
-                    }
-                    return Err(AppError::Api(format!("HTTP request failed: {}", e)));
-                }
-            }
-        }
-
-        Err(AppError::Api(format!(
-            "HTTP request failed after retries: {}",
-            last_err.unwrap_or_default()
-        )))
+            other => AppError::Api(format!("HTTP request failed: {}", other)),
+        })
     }
 
     pub async fn post_eapi(
@@ -111,9 +108,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
-
         let form = vec![("params".to_string(), params.to_string())];
-
         let resp = Self::request_with_retry(
             client,
             reqwest::Method::POST,
@@ -123,7 +118,6 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-
         resp.text()
             .await
             .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))
@@ -138,7 +132,6 @@ impl HttpClient {
         let mut headers = HashMap::new();
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
-
         let resp = Self::request_with_retry(
             client,
             reqwest::Method::POST,
@@ -148,12 +141,10 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-
         let text = resp
             .text()
             .await
             .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))?;
-
         serde_json::from_str(&text).map_err(|e| {
             AppError::Api(format!(
                 "Failed to parse JSON: {} body={}",
@@ -171,7 +162,6 @@ impl HttpClient {
         let mut headers = HashMap::new();
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
-
         let resp = Self::request_with_retry(
             client,
             reqwest::Method::GET,
@@ -181,12 +171,10 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-
         let text = resp
             .text()
             .await
             .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))?;
-
         serde_json::from_str(&text)
             .map_err(|e| AppError::Api(format!("Failed to parse JSON: {}", e)))
     }

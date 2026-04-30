@@ -42,6 +42,23 @@ impl RetryPolicy {
         }
     }
 
+    /// 无 RuntimeConfig 时的默认实例（如 client.rs 静态方法调用场景）。
+    /// Parse profile：3 attempts（2 sleeps），Download profile：5 attempts。
+    /// 数值与 `from_runtime_config` 在 max_retries=20 时一致。
+    pub fn default_for_profile(profile: ClientProfile) -> Self {
+        let len = match profile {
+            ClientProfile::Parse => 2,    // 3 attempts (1 + 2 retries)
+            ClientProfile::Download => 4, // 5 attempts (1 + 4 retries)
+        };
+        Self {
+            backoff: DEFAULT_BACKOFF
+                .iter()
+                .take(len)
+                .map(|ms| Duration::from_millis(*ms))
+                .collect(),
+        }
+    }
+
     pub fn max_attempts(&self) -> usize {
         self.backoff.len() + 1
     }
@@ -97,5 +114,19 @@ mod tests {
     fn max_attempts_is_backoff_plus_one() {
         // backoff=[a,b,c] → 第 1 次尝试 + 3 次重试 = 4 attempts
         assert_eq!(RetryPolicy::fixed(&[1, 2, 3]).max_attempts(), 4);
+    }
+
+    #[test]
+    fn default_for_profile_parse_yields_3_attempts() {
+        let p = RetryPolicy::default_for_profile(ClientProfile::Parse);
+        assert_eq!(p.max_attempts(), 3);
+        assert_eq!(p.backoff[0], Duration::from_millis(500));
+        assert_eq!(p.backoff[1], Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn default_for_profile_download_yields_5_attempts() {
+        let p = RetryPolicy::default_for_profile(ClientProfile::Download);
+        assert_eq!(p.max_attempts(), 5);
     }
 }

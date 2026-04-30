@@ -142,6 +142,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-E — `client.rs` retry migration + 下载侧 CDN 速率护栏.**
+  Closes the two known SOT/coverage gaps left by PR-A/PR-B/PR-C:
+  - **`netease/client.rs::request_with_retry` 重写为 `crate::http::with_retry`
+    + `HttpFailureKind`** — 删除 `MAX_RETRIES` (3) 和 `RETRY_DELAYS_MS`
+    (3 阶, 第二份独立 SOT 漂移)。退避表唯一来源现为
+    `crate::http::DEFAULT_BACKOFF`。`HttpFailureKind::from_reqwest`
+    自动覆盖 `is_body / is_decode / is_request` 等 pre-PR-E 漏的网络错；
+    `HttpFailureKind::from_response` 识别 401 → `AuthExpired` (不重试)
+    / 429 + Retry-After → `Quota` (用 server 给的延迟优先于 backoff)。
+    AppError 映射：`AuthExpired → AppError::AuthExpired (401)`,
+    `Quota → AppError::RateLimited (503)`。
+  - **`RetryPolicy::default_for_profile(ClientProfile)`** — 无
+    RuntimeConfig 场景的默认实例（client.rs 静态方法用），数值与
+    `from_runtime_config` 在 max_retries=20 时一致。Parse: 3 attempts
+    / Download: 5 attempts。
+  - **`AppState::rate_limiter: Arc<dyn RateLimiter>`** — 共享 limiter
+    instance，music_api 装饰器 + 下载侧 handler 同时消费。
+  - **下载侧 CDN 速率护栏（invariant #18）** — 3 download handlers
+    (`download.rs / download_async.rs / download_batch.rs`) 在调
+    `download_music_file` 前 `state.rate_limiter.acquire(host="cdn",
+    user=cookie_hash).await`。`acquire_timeout=300ms` 兜底放行确保
+    不卡用户面（R2 已验证）。host="cdn" 与 API 域 ("music.163.com")
+    分桶——governor LRU 内独立两套桶，互不抢 burst。
+  - 213+ tests pass，clippy clean，行为安全（兜底放行 = 等价 pre-PR-E
+    无限流时的行为；下载层有限流但仅在批量场景生效）。
+
 - **PR-C — engine retry migration to `with_retry` (SOT cleanup).**
   Completes the http retry infrastructure consolidation started in PR-A:
   - `engine/single_stream.rs::download_single_stream` 内联 retry 循环

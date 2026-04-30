@@ -88,6 +88,14 @@ pub async fn download_music(
     let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc);
     drop(rc);
 
+    // PR-E: 下载侧 CDN 速率护栏（共享 limiter，host=cdn 与 API 域分桶）
+    let cookies_snapshot = state.cookie_store.parse().unwrap_or_default();
+    let cdn_key = netease_infra::http::RateLimitKey {
+        host: "cdn".into(),
+        user: netease_infra::http::extract_user_key(&cookies_snapshot),
+    };
+    let _ = state.rate_limiter.acquire(&cdn_key).await;
+
     let result = match download_music_file(
         &state.http_client,
         state.music_api.as_ref(),
