@@ -46,7 +46,9 @@ impl Default for RuntimeConfig {
             batch_concurrency: 1,
 
             ranged_threshold: 5 * 1024 * 1024,
-            ranged_threads: 8,
+            // PR-F: 8 → 4。CDN 单连接已 ~10MB/s+，8 路并发对带宽利用边际递减且
+            // 增加 CDN 连接占用；4 路足够覆盖典型 30-50MB FLAC，减小协调开销。
+            ranged_threads: 4,
             max_retries: 5,
 
             download_cleanup_interval_secs: 300,
@@ -55,8 +57,10 @@ impl Default for RuntimeConfig {
             zip_max_age_secs: 3600,
             task_cleanup_interval_secs: 60,
 
-            cover_cache_ttl_secs: 600,
-            cover_cache_max_size: 50,
+            // PR-F: 10min → 1h。批量场景同 album N 首歌共享 cover，
+            // 命中率显著提升；单 entry ~500KB × 200 = ~100MB 上限，远小于下载峰值。
+            cover_cache_ttl_secs: 3600,
+            cover_cache_max_size: 200,
 
             batch_max_songs: 100,
             min_free_disk: 500 * 1024 * 1024,

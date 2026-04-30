@@ -10,9 +10,10 @@
 //! Public API unchanged from pre-PR-8 engine.rs.
 
 use std::path::Path;
+use std::time::Instant;
 
 use reqwest::Client;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::cache::cover_cache::CoverCache;
 use netease_domain::model::download::DownloadResult;
@@ -22,6 +23,7 @@ use netease_domain::port::cookie_store::CookieStore;
 use netease_domain::port::music_api::MusicApi;
 use netease_domain::service::download_service;
 use netease_kernel::error::AppError;
+use netease_kernel::observability::LogEvent;
 
 use super::ranged::download_adaptive;
 use super::single_stream::download_single_stream;
@@ -141,6 +143,19 @@ pub async fn download_music_file(
         config.disk_guard_grace_secs,
     )?;
 
+    // PR-F: download metrics — start timer，emit DownloadStarted/Completed/Failed
+    let started = Instant::now();
+    let song_id = music_info.id;
+    let expected_bytes = music_info.file_size;
+    info!(
+        event = %LogEvent::DownloadStarted,
+        song_id = song_id,
+        quality = %quality,
+        expected_bytes = expected_bytes,
+        trace_id = %trace_id,
+        "download started"
+    );
+
     let (dl_result, cover_data) = tokio::join!(
         download_file_ranged(
             client,
@@ -152,11 +167,29 @@ pub async fn download_music_file(
         ),
         cover_cache.fetch(client, &music_info.pic_url),
     );
+    if let Err(e) = &dl_result {
+        warn!(
+            event = %LogEvent::DownloadFailed,
+            song_id = song_id,
+            duration_ms = started.elapsed().as_millis() as u64,
+            error = %e,
+            trace_id = %trace_id,
+            "download failed"
+        );
+    }
     dl_result?;
 
     write_music_tags(&file_path, &music_info, cover_data.as_deref());
 
     let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    info!(
+        event = %LogEvent::DownloadCompleted,
+        song_id = song_id,
+        duration_ms = started.elapsed().as_millis() as u64,
+        bytes = size,
+        trace_id = %trace_id,
+        "download completed"
+    );
     Ok(DownloadResult::ok_with_cover(
         file_path, size, music_info, cover_data,
     ))

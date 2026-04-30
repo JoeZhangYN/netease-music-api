@@ -3,9 +3,12 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use reqwest::Client;
-use tracing::warn;
+use tracing::{info, warn};
+
+use netease_kernel::observability::LogEvent;
 
 use crate::download::engine::download_client;
+use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 
 struct CacheEntry {
     data: Vec<u8>,
@@ -42,57 +45,72 @@ impl CoverCache {
 
         if let Some(entry) = self.cache.get(pic_url) {
             if entry.inserted_at.elapsed() < ttl {
+                info!(event = %LogEvent::CoverCacheHit, url = %pic_url, "cover cache hit");
                 return Some(entry.data.clone());
             }
         }
 
+        // PR-F: 复用 with_retry + HttpFailureKind（替代 pre-PR-F 内部硬编码
+        // [0,500,1000,2000,4000]ms 第三份独立 SOT）。Download profile = 5 attempts。
         let dl = download_client();
-        let delays = [0u64, 500, 1000, 2000, 4000];
-        let max = delays.len();
-        for (attempt, &delay_ms) in delays.iter().enumerate() {
-            if delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        let policy = RetryPolicy::default_for_profile(ClientProfile::Download);
+        let started = Instant::now();
+        let result: Result<Vec<u8>, HttpFailureKind> = with_retry(&policy, || async {
+            let resp = dl
+                .get(pic_url)
+                .send()
+                .await
+                .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(HttpFailureKind::from_response(status, b"")
+                    .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {}", status))));
             }
-            match dl.get(pic_url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(data) = resp.bytes().await {
-                        let data = data.to_vec();
+            resp.bytes()
+                .await
+                .map(|b| b.to_vec())
+                .map_err(|e| HttpFailureKind::from_reqwest(&e))
+        })
+        .await;
 
-                        if self.cache.len() >= max_size {
-                            let oldest = self
-                                .cache
-                                .iter()
-                                .min_by_key(|e| e.value().inserted_at)
-                                .map(|e| e.key().clone());
-                            if let Some(key) = oldest {
-                                self.cache.remove(&key);
-                            }
-                        }
-
-                        self.cache.insert(
-                            pic_url.to_string(),
-                            CacheEntry {
-                                data: data.clone(),
-                                inserted_at: Instant::now(),
-                            },
-                        );
-                        return Some(data);
+        match result {
+            Ok(data) => {
+                if self.cache.len() >= max_size {
+                    let oldest = self
+                        .cache
+                        .iter()
+                        .min_by_key(|e| e.value().inserted_at)
+                        .map(|e| e.key().clone());
+                    if let Some(key) = oldest {
+                        self.cache.remove(&key);
                     }
                 }
-                Ok(_) => {
-                    if attempt < max - 1 {
-                        continue;
-                    }
-                }
-                Err(e) => {
-                    if attempt < max - 1 {
-                        warn!("Cover download attempt {} failed: {}", attempt + 1, e);
-                        continue;
-                    }
-                }
+                self.cache.insert(
+                    pic_url.to_string(),
+                    CacheEntry {
+                        data: data.clone(),
+                        inserted_at: Instant::now(),
+                    },
+                );
+                info!(
+                    event = %LogEvent::CoverCacheMiss,
+                    url = %pic_url,
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    bytes = data.len(),
+                    "cover cache miss + fetch ok"
+                );
+                Some(data)
+            }
+            Err(kind) => {
+                warn!(
+                    event = %LogEvent::CoverCacheMiss,
+                    url = %pic_url,
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    failure = %kind,
+                    "cover fetch failed after retries"
+                );
+                None
             }
         }
-
-        None
     }
 }

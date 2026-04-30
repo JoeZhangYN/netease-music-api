@@ -28,6 +28,8 @@ pub enum LogEvent {
     DownloadRetry,
     DownloadCacheHit,
     DownloadPartFileResumed, // PR-8
+    CoverCacheHit,           // PR-F
+    CoverCacheMiss,          // PR-F
 
     // ---- Range engine internals ----
     RangeProbeResult,
@@ -87,6 +89,8 @@ impl LogEvent {
             LogEvent::DownloadRetry => "download_retry",
             LogEvent::DownloadCacheHit => "download_cache_hit",
             LogEvent::DownloadPartFileResumed => "download_part_file_resumed",
+            LogEvent::CoverCacheHit => "cover_cache_hit",
+            LogEvent::CoverCacheMiss => "cover_cache_miss",
             LogEvent::RangeProbeResult => "range_probe_result",
             LogEvent::RangeChunkRetry => "range_chunk_retry",
             LogEvent::RangeChunkExhausted => "range_chunk_exhausted",
