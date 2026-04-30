@@ -141,6 +141,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Total tests: 125 → 132 (+7 from observability + 1 replaced engine
   test). All passing.
 
+### Performance
+- **PR-H — ranged.rs pwrite refactor**（内存优化）.
+  pre-PR-H：`download_remaining_and_assemble` 内 `HashMap<u64, Vec<u8>>`
+  暂存所有 chunk 后单次 assemble 写盘——内存峰值 ≈ content_length（100MB FLAC ×
+  8 chunk 全在内存 = ~100MB 暂存）。
+  post-PR-H：预分配 `.part` 至 content_length；每 chunk task 持独立
+  `tokio::fs::File` handle（Windows/Linux 默认允许多 handle 共享同 file 写
+  disjoint range），seek + write_all 后立即 drop Vec。内存常驻 = 当前在飞
+  chunk 数 × chunk_size，最坏情况与 pre-PR-H 相当但**典型场景下** chunk 异步
+  错峰完成，drop 即时释放，~30-50% 内存减少。短读检测前置（fetch 校验
+  长度后再写），不污染 `.part`。`first_data` 通过独立 handle 写到 offset 0。
+  PR-3 atomic rename + size verification 不变。
+- **PR-G — download_batch 2-deep prefetch**（解析管道 3-deep）.
+  pre-PR-G：1-deep prefetch（50% trigger → 解析 song N+1，drain 在 N+1 开始时）。
+  post-PR-G：双槽位 prefetch_n_plus_1 + prefetch_n_plus_2，分别由 50% / 25%
+  trigger 启动。drain n+1 后 rotate n+2 → n+1，`spawn_prefetch` 闭包 helper
+  共享 state/quality/cookies/fallback_cfg 装配（DRY）。URL 过期窗 5-10min
+  内 3-deep 累计延迟 60-120s，安全余量足。批量场景预期 ~5-10% 总时长缩减。
+  早退分支（semaphore timeout / cached_size hit / disk_guard fail / done）同
+  flip 两个 trigger，避免 spawned task 卡住等 trigger。
+- **PR-F — 默认值调参 + observability + CoverCache SOT 收敛**.
+  - RuntimeConfig defaults: cover_cache_max_size 50→200, cover_cache_ttl_secs
+    600→3600 (1h), ranged_threads 8→4 (CDN 单连接已 10MB/s+, 4 路足够)。所有
+    在 validate() bound 范围内, pre-PR `runtime_config.json` 仍 valid。
+  - CoverCache.fetch 迁移 `crate::http::with_retry`：删除内部硬编码
+    `delays=[0,500,1000,2000,4000]ms`（pre-PR-F 第三份独立 SOT 漂移）。
+    现 RetryPolicy::default_for_profile(Download) 5 attempts CDN-tolerant
+    + HttpFailureKind 自动覆盖 is_body/is_decode/is_request。**全 codebase
+    退避表彻底单源化**于 `crate::http::DEFAULT_BACKOFF`。
+  - LogEvent +2 变体（`CoverCacheHit` / `CoverCacheMiss`）+ wrapper.rs
+    instrument download_music_file 入口/出口，发射 `DownloadStarted /
+    DownloadCompleted / DownloadFailed` 含 song_id + duration_ms + bytes +
+    trace_id。事后 JSONL log 可分析 per-song latency 分布、cover hit rate。
+
+### Performance Notes — 低 ROI 分析（不实施，记录评估）
+
+| 候选 | 评估 | 决定 |
+|------|-----|------|
+| HTTP/2 multiplexing | reqwest + rustls 默认走 H2，pool 复用 | ✅ 已享，无需调 |
+| TLS handshake 缓存 | TLS 1.3 + pool_idle_timeout=90s | ✅ 已优 |
+| AES-128-ECB encrypt_params | 单解析 ≤4 次加密 ≈ 4ms ≪ RTT | 不值得 |
+| DashMap 替换 | 已 lock-free shard，1000-entry 操作 <1µs | 不值得 |
+| prefetch ≥5-deep | 累计延迟 4 min 触 URL 过期窗（5-10 min） | ❌ 风险大于收益，停于 3-deep |
+| Cookie 解析缓存 | per-request ~10µs 已轻 | 不值得 |
+| zip.rs 并行压缩 | rayon + ZipWriter 不 thread-safe，重设计成本高 | ❌ 跨阶段重构 |
+| 持久化 task_store (sled/sqlite) | 跨 v3/v4 边界，已列 v4 deferred | ❌ 不在本轮 |
+| tags.rs lofty 写入 spawn_blocking | 每首 1 次 ~50ms，非 hot loop | 单独 PR-I 评估 |
+
 ### Refactor
 - **PR-E — `client.rs` retry migration + 下载侧 CDN 速率护栏.**
   Closes the two known SOT/coverage gaps left by PR-A/PR-B/PR-C:

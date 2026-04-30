@@ -1,17 +1,18 @@
 // file-size-gate: exempt PR-8 — ranged path is naturally cohesive (probe + assembly + fetch_range), splitting further into 2 files reduces local readability without adding clarity
 
-//! PR-8 — Range probe + parallel chunk download + assembly.
+//! PR-8 — Range probe + parallel chunk download + pwrite assembly.
 //!
-//! PR-C: 每分块 fetch 的内联 retry 循环迁移到 `crate::http::retry::with_retry`，
-//! 复用 `DEFAULT_BACKOFF` 单源退避表。Short-read 视为可重试 Network。
+//! PR-C: 每分块 fetch 的内联 retry 循环迁移到 `crate::http::retry::with_retry`。
+//! PR-H: chunk 重组从内存 `HashMap<u64, Vec<u8>>` → 预分配 `.part` + per-task
+//!   独立 File handle pwrite (seek + write_all)。内存峰值从 content_length
+//!   降至 ~chunk_size × 并发任务数（chunk drop on write 后立即释放）。
 
-use std::collections::HashMap;
+use std::io::SeekFrom;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
-use tokio::sync::Mutex;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tracing::warn;
 
 use netease_kernel::error::AppError;
@@ -81,7 +82,7 @@ pub(super) async fn download_adaptive(
             cb(first_data.len() as u64, content_length);
         }
 
-        download_remaining_and_assemble(
+        download_remaining_and_pwrite(
             client,
             url,
             file_path,
@@ -108,9 +109,11 @@ pub(super) async fn download_adaptive(
     }
 }
 
-/// Download remaining chunks (2..N) in parallel, then assemble with first chunk.
+/// PR-H: 预分配 `.part` + per-task pwrite。每 chunk task 持独立 File handle
+/// （Windows/Linux 默认允许多 handle 共享同 file 写入），seek + write_all 到
+/// disjoint range 无冲突。Vec 写入后立即 drop 释放内存。
 #[allow(clippy::too_many_arguments)]
-async fn download_remaining_and_assemble(
+async fn download_remaining_and_pwrite(
     client: &Client,
     url: &str,
     file_path: &Path,
@@ -121,9 +124,40 @@ async fn download_remaining_and_assemble(
     max_retries: usize,
     on_progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
-    let downloaded_total = Arc::new(std::sync::atomic::AtomicU64::new(first_data.len() as u64));
-    let results: Arc<Mutex<HashMap<u64, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
-    results.lock().await.insert(0, first_data);
+    // 预分配 .part 文件至 content_length（pwrite 到 offset 需文件已具该长度）
+    {
+        let f = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(file_path)
+            .await
+            .map_err(|e| AppError::Download(format!("Create .part failed: {}", e)))?;
+        f.set_len(content_length)
+            .await
+            .map_err(|e| AppError::Download(format!("set_len .part failed: {}", e)))?;
+    }
+
+    // 写第一 chunk（已 fetch）到 offset 0
+    {
+        let mut f = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(file_path)
+            .await
+            .map_err(|e| AppError::Download(format!("Open .part for first write: {}", e)))?;
+        f.seek(SeekFrom::Start(0))
+            .await
+            .map_err(|e| AppError::Download(format!("seek 0 failed: {}", e)))?;
+        f.write_all(&first_data)
+            .await
+            .map_err(|e| AppError::Download(format!("Write first chunk failed: {}", e)))?;
+        f.flush()
+            .await
+            .map_err(|e| AppError::Download(format!("flush first chunk failed: {}", e)))?;
+    }
+
+    let downloaded_total =
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(first_data.len() as u64));
 
     let mut ranges = Vec::new();
     for i in 1..ranged_threads {
@@ -137,19 +171,17 @@ async fn download_remaining_and_assemble(
     }
 
     let mut handles = Vec::new();
-    for (start, end) in ranges.clone() {
+    for (start, end) in ranges {
         let client = client.clone();
         let url = url.to_string();
         let downloaded_total = downloaded_total.clone();
         let on_progress = on_progress.clone();
-        let results = results.clone();
         let cl = content_length;
-
         let policy = build_policy(max_retries);
+        let part_path = file_path.to_path_buf();
+
         handles.push(tokio::spawn(async move {
             let expected_len = end - start + 1;
-            // PR-C: with_retry 替换内联 retry 循环。Short-read / fetch_range Err
-            // 都映射为 HttpFailureKind::Network 视为可重试瞬态（与 pre-PR-C 等价）。
             let result: Result<Vec<u8>, HttpFailureKind> = with_retry(&policy, || async {
                 match fetch_range(&client, &url, start, end).await {
                     Ok(data) if (data.len() as u64) == expected_len => Ok(data),
@@ -177,6 +209,27 @@ async fn download_remaining_and_assemble(
             match result {
                 Ok(data) => {
                     let actual_len = data.len() as u64;
+                    let mut f = tokio::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&part_path)
+                        .await
+                        .map_err(|e| {
+                            AppError::Download(format!(
+                                "Open .part for chunk [{}..{}]: {}",
+                                start, end, e
+                            ))
+                        })?;
+                    f.seek(SeekFrom::Start(start)).await.map_err(|e| {
+                        AppError::Download(format!("seek {} failed: {}", start, e))
+                    })?;
+                    f.write_all(&data).await.map_err(|e| {
+                        AppError::Download(format!("pwrite [{}..{}]: {}", start, end, e))
+                    })?;
+                    f.flush().await.map_err(|e| {
+                        AppError::Download(format!("flush [{}..{}]: {}", start, end, e))
+                    })?;
+                    drop(data); // 显式释放 Vec
+
                     downloaded_total.fetch_add(actual_len, std::sync::atomic::Ordering::Relaxed);
                     if let Some(ref cb) = on_progress {
                         cb(
@@ -184,7 +237,6 @@ async fn download_remaining_and_assemble(
                             cl,
                         );
                     }
-                    results.lock().await.insert(start, data);
                     Ok(())
                 }
                 Err(kind) => Err(AppError::Download(format!(
@@ -202,26 +254,7 @@ async fn download_remaining_and_assemble(
             .map_err(|e| AppError::Download(format!("Range download failed: {}", e)))?;
     }
 
-    let chunks = results.lock().await;
-    let mut file = std::fs::File::create(file_path)
-        .map_err(|e| AppError::Download(format!("Create file failed: {}", e)))?;
-
-    use std::io::Write;
-
-    if let Some(data) = chunks.get(&0) {
-        file.write_all(data)
-            .map_err(|e| AppError::Download(format!("Write error: {}", e)))?;
-    }
-
-    for (start, _) in &ranges {
-        if let Some(data) = chunks.get(start) {
-            file.write_all(data)
-                .map_err(|e| AppError::Download(format!("Write error: {}", e)))?;
-        }
-    }
-    drop(file);
-
-    // PR-3: post-assembly size verification.
+    // PR-3: post-assembly size verification still holds
     let written = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     if written != content_length {
         return Err(AppError::Download(format!(
