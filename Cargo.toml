@@ -134,8 +134,11 @@ codegen-units = 1
 # bins 留空：不让默认拷贝输出 `netease-music-api.exe`；改由 extra_copies 出
 # `netease-music-api-windows-x64.exe`（命名与 linux-x64 对称）
 bins = []
-# 极简配置：仅打包二进制，不带文档/zip/checksums。
+# 极简配置：仅打包二进制 + Linux 一键部署脚本。
 # 排除铁板层 + 启发式层默认拉的 README/LICENSE/Dockerfile/docs/templates 等。
+include = [
+    "deploy.sh",
+]
 exclude = [
     "README.md",
     "README*",

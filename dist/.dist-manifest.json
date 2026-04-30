@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "files": [
+    "deploy.sh",
+    "netease-music-api-linux-x64",
+    "netease-music-api-windows-x64.exe"
+  ]
+}

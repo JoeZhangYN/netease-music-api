@@ -25,3 +25,6 @@ devnull
 # Tool / hook artifacts
 .claude/.hooks-log/
 .claude/Cargo-additions.toml.example
+.claude/refactor/
+.claude/scheduled_tasks.lock
+*.bak
