@@ -295,6 +295,9 @@ async fn do_single_download(
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
     let api = state.music_api.as_ref();
+    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
+        &state.runtime_config.load(),
+    );
 
     let music_info = if let Some(mut meta) = metadata {
         // PR-6: get_song_url returns typed SongUrlData; no more .pointer()
@@ -333,7 +336,15 @@ async fn do_single_download(
             .map_err(|e| format!("parse semaphore closed: {}", e))?;
         state.stats.increment("parse");
 
-        let info_result = download_service::get_music_info(api, music_id, quality, &cookies).await;
+        let info_result = download_service::get_music_info(
+            api,
+            music_id,
+            quality,
+            &cookies,
+            &fallback_cfg,
+            task_id,
+        )
+        .await;
 
         state.stats.decrement("parse");
         drop(parse_permit);

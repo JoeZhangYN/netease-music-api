@@ -10,9 +10,31 @@ use super::client::HttpClient;
 use super::crypto::encrypt_params;
 use super::pic::get_pic_url;
 use super::types::*;
+use std::str::FromStr;
+
+use netease_domain::model::api_error::ApiError;
+use netease_domain::model::quality::Quality;
 use netease_domain::model::song::SongUrlData;
 use netease_domain::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
+
+/// 解析网易云响应 code 为 typed `ApiError`。
+/// `code != 200` 时按已知风控/auth 码分类。
+///
+/// 网易云 code 约定（PR-B SOT）：
+/// - `-460` / `-461`：风控 "Cheating" / "deactivated bucket"
+/// - `-301`：cookie 失效需重新登录
+/// - 其它：归 `NeteaseCode` 透传
+fn classify_netease_code(code: i64, msg: &str) -> ApiError {
+    match code {
+        -460 | -461 => ApiError::QuotaHit { retry_after: None },
+        -301 => ApiError::AuthExpired,
+        _ => ApiError::NeteaseCode {
+            code,
+            msg: msg.into(),
+        },
+    }
+}
 
 pub struct NeteaseApi {
     client: Client,
@@ -57,22 +79,29 @@ impl MusicApi for NeteaseApi {
         let text = HttpClient::post_eapi(&self.client, SONG_URL_V1, &params, cookies).await?;
 
         let result: Value = serde_json::from_str(&text)
-            .map_err(|e| AppError::Api(format!("Parse response failed: {}", e)))?;
+            .map_err(|e| AppError::from(ApiError::Parse(e.to_string())))?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
+        // PR-B：风控/auth typed 识别。code != 200 → ApiError 分类
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
             let msg = result
                 .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(AppError::Api(format!("Get song URL failed: {}", msg)));
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
-        // PR-6: parse to typed struct here; callers no longer pointer.
         let song_data = result.pointer("/data/0").ok_or_else(|| {
-            AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into())
+            AppError::from(ApiError::Parse("missing /data/0 in response".into()))
         })?;
-        SongUrlData::from_api_response(song_data)
-            .ok_or_else(|| AppError::NotFound("获取音乐URL失败，可能是版权限制或音质不支持".into()))
+        // PR-B: from_api_response 返 None = url 为空 → UrlEmpty 让 fallback 决策
+        match SongUrlData::from_api_response(song_data) {
+            Some(d) => Ok(d),
+            None => Err(AppError::from(ApiError::UrlEmpty {
+                quality: Quality::from_str(quality).unwrap_or_default(),
+                song_id: song_id_num,
+            })),
+        }
     }
 
     async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {

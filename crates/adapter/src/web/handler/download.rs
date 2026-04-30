@@ -83,7 +83,10 @@ pub async fn download_music(
     };
     state.stats.increment("download");
 
-    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
+    let rc = state.runtime_config.load();
+    let dl_config = DownloadConfig::from_runtime_config(&rc);
+    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc);
+    drop(rc);
 
     let result = match download_music_file(
         &state.http_client,
@@ -95,6 +98,8 @@ pub async fn download_music(
         &quality,
         None,
         &dl_config,
+        &fallback_cfg,
+        &music_id, // trace_id: 同步下载用 music_id 作 trace key
     )
     .await
     {

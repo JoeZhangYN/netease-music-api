@@ -13,3 +13,4 @@ serde_json = { version = "1", features = ["preserve_order"] }
 async-trait = "0.1"
 futures = "0.3"
 thiserror = "2"
+tracing = "0.1"

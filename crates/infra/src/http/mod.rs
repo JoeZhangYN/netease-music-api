@@ -10,11 +10,13 @@
 //! 后者在 PR-A 收尾时退化为本模块的转发壳子，最终 PR-C 完全替换。
 
 pub mod client_builder;
+pub mod decorator;
 pub mod error;
 pub mod rate_limit;
 pub mod retry;
 
 pub use client_builder::{make_client, ClientProfile};
+pub use decorator::{extract_user_key, RateLimitedMusicApi};
 pub use error::HttpFailureKind;
 pub use rate_limit::governor_limiter::GovernorLimiter;
 pub use rate_limit::{RateLimitError, RateLimitKey, RateLimiter};

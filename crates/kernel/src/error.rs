@@ -39,6 +39,16 @@ pub enum AppError {
     #[error("Invalid quality: {0}")]
     QualityParse(String),
 
+    // PR-B — typed errors for parse-side risk control / auth lifecycle.
+    /// 触发风控（429 / 网易云 -460/-461）。`Option<u64>` = 建议重试秒数。
+    /// 状态映射 503（用户面而非 429，详 plan §4 表）。
+    #[error("Rate limited (retry after {0:?}s)")]
+    RateLimited(Option<u64>),
+
+    /// Cookie / token 失效（401 + deactivated / 网易云 -301）。状态 401，**不**重试。
+    #[error("Auth expired — please re-login")]
+    AuthExpired,
+
     #[error("{0}")]
     Internal(#[from] anyhow::Error),
 }
@@ -58,6 +68,8 @@ impl AppError {
             Self::UrlUnavailable(_) => 502,
             Self::InvalidTransition(_) => 500,
             Self::QualityParse(_) => 400,
+            Self::RateLimited(_) => 503,
+            Self::AuthExpired => 401,
             Self::Internal(_) => 500,
         }
     }
@@ -85,5 +97,12 @@ mod tests {
         assert_eq!(AppError::NotFound("x".into()).status_code(), 404);
         assert_eq!(AppError::DiskFull("x".into()).status_code(), 507);
         assert_eq!(AppError::ServiceBusy.status_code(), 503);
+    }
+
+    #[test]
+    fn pr_b_status_codes() {
+        assert_eq!(AppError::RateLimited(Some(30)).status_code(), 503);
+        assert_eq!(AppError::RateLimited(None).status_code(), 503);
+        assert_eq!(AppError::AuthExpired.status_code(), 401);
     }
 }

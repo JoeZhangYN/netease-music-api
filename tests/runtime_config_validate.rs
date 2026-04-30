@@ -197,6 +197,45 @@ fn disk_guard_grace_60s_minimum() {
     assert!(c.validate().is_ok());
 }
 
+#[test]
+fn rate_limit_rps_zero_disables_limit() {
+    // 0 = 应急逃生口，禁用限流但 validate 应通过
+    let mut c = RuntimeConfig::default();
+    c.rate_limit_rps_per_user = 0;
+    assert!(c.validate().is_ok());
+}
+
+#[test]
+fn rate_limit_rps_upper_bound() {
+    let mut c = RuntimeConfig::default();
+    c.rate_limit_rps_per_user = 1001;
+    c.rate_limit_burst = 2000;
+    assert!(c.validate().is_err());
+    c.rate_limit_rps_per_user = 1000;
+    assert!(c.validate().is_ok());
+}
+
+#[test]
+fn rate_limit_burst_must_exceed_rps_when_enabled() {
+    let mut c = RuntimeConfig::default();
+    c.rate_limit_rps_per_user = 50;
+    c.rate_limit_burst = 30; // < rps
+    assert!(c.validate().is_err());
+    c.rate_limit_burst = 50;
+    assert!(c.validate().is_ok());
+}
+
+#[test]
+fn quality_fallback_floor_must_be_valid_quality() {
+    let mut c = RuntimeConfig::default();
+    c.quality_fallback_floor = "garbage".into();
+    assert!(c.validate().is_err());
+    c.quality_fallback_floor = "lossless".into();
+    assert!(c.validate().is_ok());
+    c.quality_fallback_floor = "dolby".into();
+    assert!(c.validate().is_ok());
+}
+
 // ---------- 序列化 round-trip：load_or_default 不丢字段 ----------
 
 #[test]
@@ -219,6 +258,10 @@ fn json_round_trip_preserves_all_fields() {
         min_free_disk: 1024 * 1024 * 1024,
         download_timeout_per_song_secs: 600,
         disk_guard_grace_secs: 600,
+        rate_limit_rps_per_user: 15,
+        rate_limit_burst: 30,
+        quality_fallback_enabled: false,
+        quality_fallback_floor: "lossless".into(),
     };
 
     let json = serde_json::to_string(&cfg).unwrap();
@@ -241,6 +284,10 @@ fn json_round_trip_preserves_all_fields() {
     assert_eq!(parsed.min_free_disk, 1024 * 1024 * 1024);
     assert_eq!(parsed.download_timeout_per_song_secs, 600);
     assert_eq!(parsed.disk_guard_grace_secs, 600);
+    assert_eq!(parsed.rate_limit_rps_per_user, 15);
+    assert_eq!(parsed.rate_limit_burst, 30);
+    assert!(!parsed.quality_fallback_enabled);
+    assert_eq!(parsed.quality_fallback_floor, "lossless");
 
     parsed.validate().expect("round-trip 后仍合法");
 }
@@ -312,7 +359,11 @@ proptest! {
         min_disk in (100 * 1024 * 1024u64)..=u64::MAX / 2,
         dl_timeout in 10u64..=3600,
         grace in 60u64..=3600,
+        rps in 0u32..=1000,
+        burst in 0u32..=10000,
     ) {
+        // burst 必须 >= rps（当 rps>0 时），否则 validate fail
+        let effective_burst = if rps > 0 { burst.max(rps) } else { burst };
         let cfg = RuntimeConfig {
             parse_concurrency: parse_c,
             download_concurrency: dl_c,
@@ -331,6 +382,10 @@ proptest! {
             min_free_disk: min_disk,
             download_timeout_per_song_secs: dl_timeout,
             disk_guard_grace_secs: grace,
+            rate_limit_rps_per_user: rps,
+            rate_limit_burst: effective_burst,
+            quality_fallback_enabled: true,
+            quality_fallback_floor: "standard".into(),
         };
         prop_assert!(cfg.validate().is_ok());
     }

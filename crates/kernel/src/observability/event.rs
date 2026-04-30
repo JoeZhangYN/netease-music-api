@@ -66,6 +66,10 @@ pub enum LogEvent {
     DiskCacheEvicted,
     DiskEvictionSummary,
     DiskFullAfterEviction,
+
+    // ---- Parse-side fallback / auth (PR-B) ----
+    QualityFallback,
+    AuthExpired,
 }
 
 impl LogEvent {
@@ -107,6 +111,8 @@ impl LogEvent {
             LogEvent::DiskCacheEvicted => "disk_cache_evicted",
             LogEvent::DiskEvictionSummary => "disk_eviction_summary",
             LogEvent::DiskFullAfterEviction => "disk_full_after_eviction",
+            LogEvent::QualityFallback => "quality_fallback",
+            LogEvent::AuthExpired => "auth_expired",
         }
     }
 }

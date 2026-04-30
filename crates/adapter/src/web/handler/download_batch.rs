@@ -65,7 +65,10 @@ pub async fn download_batch(
         .clone()
         .unwrap_or_else(|| DEFAULT_QUALITY.into());
 
-    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
+    let rc_snapshot = state.runtime_config.load();
+    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
+    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc_snapshot);
+    drop(rc_snapshot);
 
     // Resolve and dedup IDs
     let mut seen_ids: HashSet<String> = HashSet::new();
@@ -112,6 +115,8 @@ pub async fn download_batch(
             &quality,
             None,
             &dl_config,
+            &fallback_cfg,
+            mid,
         )
         .await;
 
@@ -275,8 +280,11 @@ async fn batch_download_worker(
     let mut seen_ids: HashSet<String> = HashSet::new();
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
-    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
-    let download_timeout = state.runtime_config.load().download_timeout_per_song_secs;
+    let rc_snapshot = state.runtime_config.load();
+    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
+    let fallback_cfg = netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc_snapshot);
+    let download_timeout = rc_snapshot.download_timeout_per_song_secs;
+    drop(rc_snapshot);
 
     // Progress: parse+download = 90%, packaging = 10%
     // Per-song ratio: parse:download = 1:9
@@ -362,6 +370,8 @@ async fn batch_download_worker(
                 &music_id,
                 &quality,
                 &cookies,
+                &fallback_cfg,
+                &music_id,
             )
             .await;
 
@@ -393,6 +403,7 @@ async fn batch_download_worker(
             let state_c = Arc::clone(&state);
             let quality_c = quality.clone();
             let cookies_c = cookies.clone();
+            let fallback_cfg_c = fallback_cfg.clone();
             Some(tokio::spawn(async move {
                 while !trigger.load(Ordering::Relaxed) {
                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -413,6 +424,8 @@ async fn batch_download_worker(
                     &mid,
                     &quality_c,
                     &cookies_c,
+                    &fallback_cfg_c,
+                    &mid,
                 )
                 .await;
                 state_c.stats.decrement("parse");

@@ -131,7 +131,19 @@ async fn main() {
         rc.zip_max_age_secs,
         rc.task_cleanup_interval_secs,
     ));
-    let music_api = Arc::new(NeteaseApi::new(http_client.clone()));
+    // PR-B: 装饰 NeteaseApi → RateLimitedMusicApi。
+    // GovernorLimiter 按 (host, MUSIC_U[0:8]) 分桶，rps=0 时退化为禁用限流。
+    let rate_limiter: Arc<dyn netease_infra::http::RateLimiter> = Arc::new(
+        netease_infra::http::GovernorLimiter::new(
+            rc.rate_limit_rps_per_user.max(1),
+            rc.rate_limit_burst.max(rc.rate_limit_rps_per_user.max(1)),
+        ),
+    );
+    let music_api: Arc<dyn netease_domain::port::music_api::MusicApi> =
+        Arc::new(netease_infra::http::RateLimitedMusicApi::new(
+            NeteaseApi::new(http_client.clone()),
+            rate_limiter.clone(),
+        ));
     let cover_cache = Arc::new(CoverCache::new(
         rc.cover_cache_ttl_secs,
         rc.cover_cache_max_size,

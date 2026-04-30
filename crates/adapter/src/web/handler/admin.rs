@@ -238,7 +238,11 @@ pub async fn admin_get_config_schema(
             { "name": "batch_max_songs",                  "min": 1,           "max": 500,         "default": 100,           "unit": null     },
             { "name": "min_free_disk",                    "min": 104857600,   "max": null,        "default": 524288000,     "unit": "bytes"  },
             { "name": "download_timeout_per_song_secs",   "min": 10,          "max": null,        "default": 300,           "unit": "secs"   },
-            { "name": "disk_guard_grace_secs",            "min": 60,          "max": null,        "default": 300,           "unit": "secs"   }
+            { "name": "disk_guard_grace_secs",            "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
+            { "name": "rate_limit_rps_per_user",          "min": 0,           "max": 1000,        "default": 10,            "unit": "req/s"  },
+            { "name": "rate_limit_burst",                 "min": 0,           "max": 10000,       "default": 20,            "unit": null     },
+            { "name": "quality_fallback_enabled",         "min": null,        "max": null,        "default": true,          "unit": "bool"   },
+            { "name": "quality_fallback_floor",           "min": null,        "max": null,        "default": "standard",    "unit": "quality"}
         ]
     });
     APIResponse::success(schema, "ok")

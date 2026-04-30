@@ -26,6 +26,16 @@ pub struct RuntimeConfig {
     pub min_free_disk: u64,
     pub download_timeout_per_song_secs: u64,
     pub disk_guard_grace_secs: u64,
+
+    // PR-B — rate limit + quality fallback.
+    /// 单用户每秒请求上限（token bucket 速率）。0 = 禁用限流（应急逃生口）。
+    pub rate_limit_rps_per_user: u32,
+    /// burst 允许短时突发的最大令牌数。
+    pub rate_limit_burst: u32,
+    /// 是否在拿不到请求 quality 时沿 ladder 降级。false = 立刻报错（"宁缺毋滥"）。
+    pub quality_fallback_enabled: bool,
+    /// 降级最低品质（不会降到此以下）。default = "standard"。
+    pub quality_fallback_floor: String,
 }
 
 impl Default for RuntimeConfig {
@@ -52,6 +62,11 @@ impl Default for RuntimeConfig {
             min_free_disk: 500 * 1024 * 1024,
             download_timeout_per_song_secs: 300,
             disk_guard_grace_secs: 300,
+
+            rate_limit_rps_per_user: 10,
+            rate_limit_burst: 20,
+            quality_fallback_enabled: true,
+            quality_fallback_floor: "standard".into(),
         }
     }
 }
@@ -126,6 +141,23 @@ impl RuntimeConfig {
         }
         if self.disk_guard_grace_secs < 60 {
             return Err("disk_guard_grace_secs must be >= 60".into());
+        }
+        // rate_limit_rps_per_user 允许 0（应急逃生口禁用限流）；上限 1000 防误填触发风控
+        if self.rate_limit_rps_per_user > 1000 {
+            return Err("rate_limit_rps_per_user must be 0..=1000".into());
+        }
+        if self.rate_limit_burst > 10000 {
+            return Err("rate_limit_burst must be 0..=10000".into());
+        }
+        if self.rate_limit_rps_per_user > 0 && self.rate_limit_burst < self.rate_limit_rps_per_user
+        {
+            return Err("rate_limit_burst must be >= rate_limit_rps_per_user".into());
+        }
+        const VALID_QUALITIES: [&str; 8] = [
+            "standard", "exhigh", "lossless", "hires", "sky", "jyeffect", "jymaster", "dolby",
+        ];
+        if !VALID_QUALITIES.contains(&self.quality_fallback_floor.as_str()) {
+            return Err("quality_fallback_floor must be a valid Quality wire string".into());
         }
         Ok(())
     }

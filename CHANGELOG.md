@@ -142,6 +142,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-B — Quality fallback + ApiError + token-bucket rate limit.**
+  Addresses three user-reported pain points (and lays the foundation
+  for PR-C download-side migration):
+  - **Quality fallback (invariant #14).** New `Quality::ladder(start, floor)`
+    iterator descends `Hires → Lossless → Exhigh → Standard`. Premium
+    tiers (Sky/Jyeffect/Jymaster/Dolby) skip fallback (paid content,
+    fail-fast). `domain::service::song_service::resolve_url_with_fallback`
+    sweeps the ladder; `download_service::get_music_info` plumbs
+    `QualityFallbackConfig` + `trace_id` through. Response `quality`
+    field is now the **actual** quality served, not the requested.
+  - **ApiError typed enum (invariant #15).** `domain::model::api_error`
+    classifies parse failures: `UrlEmpty / QuotaHit / AuthExpired /
+    NeteaseCode / Network / Parse / Other`. `From<ApiError> for AppError`
+    maps to typed `AppError::RateLimited(retry_after)` (503) and
+    `AppError::AuthExpired` (401), enabling user-friendly UI.
+    `NeteaseApi::get_song_url` recognizes Netease codes `-460/-461`
+    (Cheating) → `QuotaHit`, `-301` → `AuthExpired`.
+  - **Token-bucket rate limit (invariant #16).** `RateLimitedMusicApi<A>`
+    decorator wraps `MusicApi` trait; `GovernorLimiter` keys buckets by
+    `(host, MUSIC_U[0:8])`, LRU 1024 + 24h TTL. `acquire_timeout=300ms`
+    fall-through guarantees no user-facing block on rate-limit acquire
+    failure (R2 mitigation). 4 new `RuntimeConfig` fields:
+    `rate_limit_rps_per_user` (10), `rate_limit_burst` (20),
+    `quality_fallback_enabled` (true), `quality_fallback_floor`
+    ("standard"); admin schema endpoint exposes them. Setting
+    `rate_limit_rps_per_user=0` is the emergency disable hatch.
+  - **AppError +2 variants** (`RateLimited`/`AuthExpired`) + 503/401
+    status mapping; **LogEvent +3 variants** (`RateLimited` /
+    `QualityFallback` / `AuthExpired`).
+  - **5 caller sites updated**: `download_music_file` (engine),
+    `download.rs`, `download_async.rs`, `download_batch.rs` (3 sites).
+    Each handler builds `QualityFallbackConfig::from_runtime_config(&rc)`
+    next to `DownloadConfig::from_runtime_config` (PR-13 SOT pattern
+    extended).
+  - **Tests**: 6 new `Quality::ladder` (terminate / skip premium /
+    floor-above-start / start==floor / mixed), 5 `ApiError → AppError`
+    mapping, 5 `GovernorLimiter` (LRU / fall-through / distinct hosts +
+    users), 4 `RateLimited` + `Quality fallback floor` validate.
+    Total +25 tests, all 209+ passing, no regression.
+
 - **PR-13 — disk_guard hardening + DownloadConfig SOT.** Address the
   /audit-all P3 FAIL findings on PR-11:
   - **Clock-rollback safety (CLAUDE.md invariant #12).**

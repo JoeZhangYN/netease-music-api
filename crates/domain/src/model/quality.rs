@@ -75,6 +75,31 @@ impl Quality {
             Quality::Dolby => "杜比全景声",
         }
     }
+
+    /// PR-B 降级阶梯：`Hires → Lossless → Exhigh → Standard`。
+    /// premium 内容（Sky/Jyeffect/Jymaster/Dolby）**不**参与 fallback——
+    /// 用户付费内容缺则缺，不应自动 silently 降到普通品质。
+    ///
+    /// 行为：
+    /// - `start` 在 ORDER 中 → 从 `start` 索引到 `floor` 索引（含），最多 4 项
+    /// - `start` 不在 ORDER 中（premium）→ 仅产出 `[start]`
+    /// - `floor` 高于 `start`（用户配置错乱）→ 仅产出 `[start]`，避免无限或空 iter
+    pub fn ladder(start: Quality, floor: Quality) -> impl Iterator<Item = Quality> {
+        const ORDER: [Quality; 4] = [
+            Quality::Hires,
+            Quality::Lossless,
+            Quality::Exhigh,
+            Quality::Standard,
+        ];
+        let start_idx = ORDER.iter().position(|q| *q == start);
+        let floor_idx = ORDER.iter().position(|q| *q == floor);
+        match (start_idx, floor_idx) {
+            (Some(s), Some(f)) if s <= f => ORDER[s..=f].to_vec(),
+            (Some(_), None) => vec![start], // floor 是 premium → 不降级
+            _ => vec![start],
+        }
+        .into_iter()
+    }
 }
 
 impl fmt::Display for Quality {
@@ -220,5 +245,52 @@ mod tests {
         let err = Quality::from_str("foo").unwrap_err();
         assert_eq!(err.0, "foo");
         assert!(format!("{}", err).contains("foo"));
+    }
+
+    // ===== PR-B Quality::ladder =====
+
+    #[test]
+    fn ladder_terminates_at_floor() {
+        // Hires → Lossless → Exhigh → Standard，floor=Standard 全 4 项
+        let v: Vec<Quality> = Quality::ladder(Quality::Hires, Quality::Standard).collect();
+        assert_eq!(v, vec![
+            Quality::Hires, Quality::Lossless, Quality::Exhigh, Quality::Standard
+        ]);
+    }
+
+    #[test]
+    fn ladder_floor_lossless_stops_above_exhigh() {
+        // Attacker：用户配置 floor=Lossless 不应降级到更低
+        let v: Vec<Quality> = Quality::ladder(Quality::Hires, Quality::Lossless).collect();
+        assert_eq!(v, vec![Quality::Hires, Quality::Lossless]);
+    }
+
+    #[test]
+    fn ladder_skips_premium_qualities() {
+        // Attacker：付费内容不参与 fallback，premium start 只产 [start] 不降级
+        for premium in [Quality::Sky, Quality::Jyeffect, Quality::Jymaster, Quality::Dolby] {
+            let v: Vec<Quality> = Quality::ladder(premium, Quality::Standard).collect();
+            assert_eq!(v, vec![premium], "premium {:?} 不应降级", premium);
+        }
+    }
+
+    #[test]
+    fn ladder_floor_above_start_returns_just_start() {
+        // 用户配置错乱：start=Standard, floor=Hires → 不应无限循环或空 iter
+        let v: Vec<Quality> = Quality::ladder(Quality::Standard, Quality::Hires).collect();
+        assert_eq!(v, vec![Quality::Standard]);
+    }
+
+    #[test]
+    fn ladder_start_equals_floor_returns_one() {
+        let v: Vec<Quality> = Quality::ladder(Quality::Lossless, Quality::Lossless).collect();
+        assert_eq!(v, vec![Quality::Lossless]);
+    }
+
+    #[test]
+    fn ladder_floor_premium_treats_as_no_descend() {
+        // floor 是 premium → 等同 floor 找不到，仅产 start
+        let v: Vec<Quality> = Quality::ladder(Quality::Lossless, Quality::Dolby).collect();
+        assert_eq!(v, vec![Quality::Lossless]);
     }
 }
