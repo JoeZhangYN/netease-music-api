@@ -133,6 +133,7 @@ pub async fn download_music_file(
         downloads_dir,
         music_info.file_size,
         config.min_free_disk,
+        config.disk_guard_grace_secs,
     )?;
 
     let (dl_result, cover_data) = tokio::join!(
@@ -198,6 +199,7 @@ pub async fn download_music_with_metadata(
         downloads_dir,
         music_info.file_size,
         config.min_free_disk,
+        config.disk_guard_grace_secs,
     )?;
 
     download_file_ranged(

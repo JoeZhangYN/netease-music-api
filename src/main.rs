@@ -119,14 +119,8 @@ async fn main() {
         "not set (setup via admin panel)"
     };
 
-    // Build HTTP client
-    let http_client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .read_timeout(std::time::Duration::from_secs(10))
-        .pool_max_idle_per_host(10)
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .build()
-        .expect("Failed to create HTTP client");
+    // Build HTTP client (PR-A: 单源 make_client，连接池 + 超时策略集中维护)
+    let http_client = netease_infra::http::make_client(netease_infra::http::ClientProfile::Parse);
 
     // Initialize infra components
     let cookie_store = Arc::new(FileCookieStore::new(&config.cookie_file));

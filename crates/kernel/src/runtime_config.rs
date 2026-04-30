@@ -25,6 +25,7 @@ pub struct RuntimeConfig {
     pub batch_max_songs: usize,
     pub min_free_disk: u64,
     pub download_timeout_per_song_secs: u64,
+    pub disk_guard_grace_secs: u64,
 }
 
 impl Default for RuntimeConfig {
@@ -50,6 +51,7 @@ impl Default for RuntimeConfig {
             batch_max_songs: 100,
             min_free_disk: 500 * 1024 * 1024,
             download_timeout_per_song_secs: 300,
+            disk_guard_grace_secs: 300,
         }
     }
 }
@@ -121,6 +123,9 @@ impl RuntimeConfig {
         }
         if self.download_timeout_per_song_secs < 10 {
             return Err("download_timeout_per_song_secs must be >= 10".into());
+        }
+        if self.disk_guard_grace_secs < 60 {
+            return Err("disk_guard_grace_secs must be >= 60".into());
         }
         Ok(())
     }

@@ -387,12 +387,7 @@ async fn do_single_download(
     let (dl_config, dl_timeout_secs) = {
         let rc = state.runtime_config.load();
         (
-            DownloadConfig {
-                ranged_threshold: rc.ranged_threshold,
-                ranged_threads: rc.ranged_threads,
-                max_retries: rc.max_retries,
-                min_free_disk: rc.min_free_disk,
-            },
+            DownloadConfig::from_runtime_config(&rc),
             rc.download_timeout_per_song_secs,
         )
     };

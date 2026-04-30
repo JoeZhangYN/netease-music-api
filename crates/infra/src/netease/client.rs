@@ -9,6 +9,8 @@ use tracing::warn;
 use super::types::{default_cookies, REFERER, USER_AGENT};
 use netease_kernel::error::AppError;
 
+// PR-A: 数值与 `crate::http::DEFAULT_BACKOFF` 前 3 阶一致（SOT 收敛点）。
+// PR-B 完整迁移到 `crate::http::with_retry` + `HttpFailureKind` 时本块删除。
 const MAX_RETRIES: usize = 3;
 const RETRY_DELAYS_MS: [u64; 3] = [500, 1000, 2000];
 

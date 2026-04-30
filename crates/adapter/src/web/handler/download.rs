@@ -83,15 +83,7 @@ pub async fn download_music(
     };
     state.stats.increment("download");
 
-    let dl_config = {
-        let rc = state.runtime_config.load();
-        DownloadConfig {
-            ranged_threshold: rc.ranged_threshold,
-            ranged_threads: rc.ranged_threads,
-            max_retries: rc.max_retries,
-            min_free_disk: rc.min_free_disk,
-        }
-    };
+    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
 
     let result = match download_music_file(
         &state.http_client,

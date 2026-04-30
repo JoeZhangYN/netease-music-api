@@ -142,6 +142,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test). All passing.
 
 ### Refactor
+- **PR-13 — disk_guard hardening + DownloadConfig SOT.** Address the
+  /audit-all P3 FAIL findings on PR-11:
+  - **Clock-rollback safety (CLAUDE.md invariant #12).**
+    `select_evictions` now treats `duration_since` `Err` (future mtime /
+    system clock rollback) as conservatively recent → skip. Pre-PR-13
+    it fell through to `remove_file`, so a backwards clock skew silently
+    deleted user data.
+  - **Pure decision split.** `select_evictions(files, now, grace, deficit)`
+    extracted to `download/disk_guard/select.rs`; full coverage of
+    boundary cases (== grace, future mtime, all-recent, deficit truncation,
+    mixed) in unit tests. IO orchestration retained in
+    `download/disk_guard/mod.rs`.
+  - **Structured logging via `LogEvent` enum (invariant #13).**
+    `DiskCacheEvicted` and `DiskFullAfterEviction` variants now emitted
+    via `event = %LogEvent::Foo` rather than raw strings; eviction
+    summary becomes structured fields (`evicted_count` / `skipped_recent`
+    / `grace_secs` / `freed_bytes`); terminal `DiskFull` now logged at
+    `error!` before returning `Err` (variant was defined but never
+    emitted pre-PR-13 — dead SOT entry).
+  - **`disk_guard_grace_secs` now in `RuntimeConfig` (invariant #8).**
+    Hardcoded `RECENT_GRACE_SECS=300` const removed; threshold is
+    runtime-tunable via `/admin/config` like all other thresholds.
+    `validate()` enforces ≥60s. Schema endpoint exposes the field.
+  - **`DownloadConfig::from_runtime_config` single-source constructor
+    (invariant #11).** Five handler sites previously each wrote a
+    field-by-field `DownloadConfig {...}` literal. PR-12 added
+    `disk_guard_grace_secs` and required updating all five — exactly
+    the SOT §3.2 drift pattern the project's own audit had flagged.
+    Map function consolidates to one site; future field additions
+    update one location, with compile-time exhaustiveness.
+  - **Invariant table now numbered (CLAUDE.md SOT).** CHANGELOG
+    entries reverse-reference table rows by `#N`; CLAUDE.md is the
+    SOT, CHANGELOG narrates which PR landed each row.
+  - **CLAUDE.md release wording corrected.** "v3 bottom-up refactor
+    完成" → "v3 critical-bug release; FSM / typestate deferred to
+    v4" — the wording now matches CHANGELOG's "foundations laid"
+    self-assessment.
+  - **Tests.** 6 unit (pure decision) + 5 integration (real fs IO,
+    including `set_modified` to simulate future-mtime/old files).
+    All previously-zero coverage on `ensure_disk_space` (a delete-user-data
+    critical path).
+
+- **PR-12 — wrap-up: docs + invariants table.** Final PR of v3
+  bottom-up refactor sequence.
+  - `.claude/CLAUDE.md` gains "v3 关键不变量" table (CLAUDE.md as SOT;
+    PR-13 numbered the rows and added #11/#12/#13).
+  - Each row links to the enforcing module + the pre-refactor anti-pattern.
+  - References to refactored modules updated (engine split / helpers /
+    observability paths).
+  - File-size-gate audit completed: 8 files retained explicit exempt
+    headers with PR-X reason annotations; remaining files (post-PR-8
+    engine split + PR-9 helpers split) all under 150 SLOC.
+  - **v3 release marker.** All user-facing critical bugs fixed
+    (90% stall, dolby drift, 5xx silent success). Type-driven
+    foundations laid (Quality enum, SongId, AppError extensions,
+    DownloadError, observability LogEvent, RAII helpers). Engine
+    + helpers modularized.
+  - **Deferred to v4** (full plan §6 items not landed in v3):
+    - DownloadJob FSM with UrlRefresher + Range resume from .part
+    - MusicInfo split into MusicMetadata + DownloadableSong typestate
+    - DownloadOutcome enum replacing DownloadResult struct
+    - TaskStore typed transitions (replace `update(FnOnce)`)
+    - StatsKind enum replacing `&str` (~30 sites)
+    - ParsedCookies smart constructor wrapper
+    - Frontend (templates/index.html) consuming the schema endpoints
+    - Handler migration to PR-9 helpers (PermitGuard / TempZipHandle /
+      AppErrorResponse — additive, can adopt on touch)
+    - Persistent TaskStore (sled / sqlite) — gated on user reporting
+      task-loss-on-restart pain
+
+- **PR-11 — disk_guard grace window (lands invariant #8).**
+  `ensure_disk_space` skips files modified within the last 5 minutes
+  when freeing space — heuristic mitigation for engine creates `.part`
+  → `disk_guard` evicts oldest by mtime → engine fails. Pre-PR-11
+  the loop could delete an active `.part` mid-download. (Note: PR-13
+  later corrected the wording from "in-flight files not evicted" to
+  "近期修改文件 5 分钟宽限" — the mtime check is a heuristic, not a
+  real in-flight registry; long stalls > grace can still race.
+  Clock-rollback safety + structured logging + RuntimeConfig
+  threshold migration also landed in PR-13.)
+
 - **PR-10 — admin schema endpoints (minimal).** Adds 2 read-only
   endpoints exposing internal SOTs to clients, eliminating the need
   for the frontend to hand-code values that drift from Rust:

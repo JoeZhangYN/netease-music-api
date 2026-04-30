@@ -65,15 +65,7 @@ pub async fn download_batch(
         .clone()
         .unwrap_or_else(|| DEFAULT_QUALITY.into());
 
-    let dl_config = {
-        let rc = state.runtime_config.load();
-        DownloadConfig {
-            ranged_threshold: rc.ranged_threshold,
-            ranged_threads: rc.ranged_threads,
-            max_retries: rc.max_retries,
-            min_free_disk: rc.min_free_disk,
-        }
-    };
+    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
 
     // Resolve and dedup IDs
     let mut seen_ids: HashSet<String> = HashSet::new();
@@ -283,15 +275,7 @@ async fn batch_download_worker(
     let mut seen_ids: HashSet<String> = HashSet::new();
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
-    let dl_config = {
-        let rc = state.runtime_config.load();
-        DownloadConfig {
-            ranged_threshold: rc.ranged_threshold,
-            ranged_threads: rc.ranged_threads,
-            max_retries: rc.max_retries,
-            min_free_disk: rc.min_free_disk,
-        }
-    };
+    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
     let download_timeout = state.runtime_config.load().download_timeout_per_song_secs;
 
     // Progress: parse+download = 90%, packaging = 10%
@@ -526,6 +510,7 @@ async fn batch_download_worker(
             &state.config.downloads_dir,
             music_info.file_size,
             dl_config.min_free_disk,
+            dl_config.disk_guard_grace_secs,
         ) {
             error!("Batch: disk space check failed for {}: {}", music_id, e);
             failed += 1;

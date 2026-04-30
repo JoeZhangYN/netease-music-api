@@ -96,15 +96,7 @@ pub async fn download_with_metadata(
         tlyric: data.tlyric.unwrap_or_default(),
     };
 
-    let dl_config = {
-        let rc = state.runtime_config.load();
-        DownloadConfig {
-            ranged_threshold: rc.ranged_threshold,
-            ranged_threads: rc.ranged_threads,
-            max_retries: rc.max_retries,
-            min_free_disk: rc.min_free_disk,
-        }
-    };
+    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
 
     let (dl_result, cover_data) = tokio::join!(
         download_music_with_metadata(

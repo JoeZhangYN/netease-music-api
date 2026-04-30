@@ -188,6 +188,15 @@ fn download_timeout_per_song_10s_minimum() {
     assert!(c.validate().is_ok());
 }
 
+#[test]
+fn disk_guard_grace_60s_minimum() {
+    let mut c = RuntimeConfig::default();
+    c.disk_guard_grace_secs = 59;
+    assert!(c.validate().is_err());
+    c.disk_guard_grace_secs = 60;
+    assert!(c.validate().is_ok());
+}
+
 // ---------- 序列化 round-trip：load_or_default 不丢字段 ----------
 
 #[test]
@@ -209,6 +218,7 @@ fn json_round_trip_preserves_all_fields() {
         batch_max_songs: 200,
         min_free_disk: 1024 * 1024 * 1024,
         download_timeout_per_song_secs: 600,
+        disk_guard_grace_secs: 600,
     };
 
     let json = serde_json::to_string(&cfg).unwrap();
@@ -230,6 +240,7 @@ fn json_round_trip_preserves_all_fields() {
     assert_eq!(parsed.batch_max_songs, 200);
     assert_eq!(parsed.min_free_disk, 1024 * 1024 * 1024);
     assert_eq!(parsed.download_timeout_per_song_secs, 600);
+    assert_eq!(parsed.disk_guard_grace_secs, 600);
 
     parsed.validate().expect("round-trip 后仍合法");
 }
@@ -300,6 +311,7 @@ proptest! {
         batch_max in 1usize..=500,
         min_disk in (100 * 1024 * 1024u64)..=u64::MAX / 2,
         dl_timeout in 10u64..=3600,
+        grace in 60u64..=3600,
     ) {
         let cfg = RuntimeConfig {
             parse_concurrency: parse_c,
@@ -318,6 +330,7 @@ proptest! {
             batch_max_songs: batch_max,
             min_free_disk: min_disk,
             download_timeout_per_song_secs: dl_timeout,
+            disk_guard_grace_secs: grace,
         };
         prop_assert!(cfg.validate().is_ok());
     }

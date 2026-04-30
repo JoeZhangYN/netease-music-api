@@ -47,6 +47,7 @@ pub enum LogEvent {
 
     // ---- Concurrency / capacity ----
     SemaphoreTimeout,
+    RateLimited,
 
     // ---- Admin security (audit log) ----
     AdminLoginAttempt,
@@ -61,7 +62,9 @@ pub enum LogEvent {
     CookieValidationFailed,
 
     // ---- Disk ----
+    DiskPressureDetected,
     DiskCacheEvicted,
+    DiskEvictionSummary,
     DiskFullAfterEviction,
 }
 
@@ -91,6 +94,7 @@ impl LogEvent {
             LogEvent::ApiFailedTerminal => "api_failed_terminal",
             LogEvent::UrlRefreshed => "url_refreshed",
             LogEvent::SemaphoreTimeout => "semaphore_timeout",
+            LogEvent::RateLimited => "rate_limited",
             LogEvent::AdminLoginAttempt => "admin_login_attempt",
             LogEvent::AdminLoginSucceeded => "admin_login_succeeded",
             LogEvent::AdminLoginFailed => "admin_login_failed",
@@ -99,7 +103,9 @@ impl LogEvent {
             LogEvent::AdminTokenRejected => "admin_token_rejected",
             LogEvent::CookieSet => "cookie_set",
             LogEvent::CookieValidationFailed => "cookie_validation_failed",
+            LogEvent::DiskPressureDetected => "disk_pressure_detected",
             LogEvent::DiskCacheEvicted => "disk_cache_evicted",
+            LogEvent::DiskEvictionSummary => "disk_eviction_summary",
             LogEvent::DiskFullAfterEviction => "disk_full_after_eviction",
         }
     }

@@ -1,6 +1,26 @@
 # Netease Cloud Music API
 
 Rust/Axum 重写的网易云音乐解析/下载服务，DDD + 六边形架构。
+v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + 类型驱动基础设施铺设；
+**FSM / typestate / DownloadOutcome 等核心类型设计 deferred 到 v4**——见 CHANGELOG.md "Deferred to v4"。
+
+## v3 关键不变量（PR 1-13 后立的护栏，**本表为 SOT**——CHANGELOG 段反向引用此表行号）
+
+| # | 不变量 | 由什么强制 | 反模式见 |
+|---|--------|----------|---------|
+| 1 | 下载文件原子性 | `engine/wrapper.rs` `.part` staging + atomic rename | `cached_size > 0` (pre-PR-3) |
+| 2 | HTTP 错误码识别 | `engine/single_stream.rs` status guard (PR-5) | reqwest 不 Err on 5xx |
+| 3 | Quality 域封闭 | `enum Quality` exhaustive match (PR-4) | `info.rs` 漏 `dolby` |
+| 4 | SongId 非零 | `NonZeroI64` newtype (PR-7) | `.unwrap_or(0)` 哨兵 |
+| 5 | 信号量 / stats 配对 | `helpers::PermitGuard` RAII Drop (PR-9) | panic 漏 decrement |
+| 6 | 临时 ZIP 60s 自清 | `helpers::TempZipHandle` Drop (PR-9) | 4 处散布 spawn-sleep |
+| 7 | 错误 → HTTP 状态 | `helpers::AppErrorResponse` `IntoResponse` (PR-9) | 17 处 `format!("xxx 失败")` |
+| 8 | 近期修改文件 5 分钟宽限 (启发式) | `disk_guard::select_evictions` (PR-11/13) — 注：mtime 启发式，非真"in-flight set" | mid-download eviction (削弱不消除) |
+| 9 | Slider 边界单源 | `GET /admin/config/schema` (PR-10) | HTML/JS/Rust 三处漂移 |
+| 10 | Quality 列表单源 | `GET /admin/qualities` (PR-10) | HTML 4 select 硬编码 |
+| 11 | DownloadConfig 字段映射单源 | `DownloadConfig::from_runtime_config` (PR-13) | handler 5 处字段-by-字段构造 |
+| 12 | 时钟回拨保守跳过 | `select_evictions` `Err` 分支 → skip (PR-13) | fall-through 即误删 |
+| 13 | 磁盘驱逐结构化日志 | `LogEvent::DiskCacheEvicted` / `DiskFullAfterEviction` (PR-13) | 字符串 event 漂移 |
 
 ## 快速定位
 
@@ -10,7 +30,9 @@ Rust/Axum 重写的网易云音乐解析/下载服务，DDD + 六边形架构。
 | 端口 trait | `crates/domain/src/port/` | `references/domain-port.md` |
 | 领域服务 | `crates/domain/src/service/` | `references/domain-service.md` |
 | 网易云 API | `crates/infra/src/netease/` | `references/infra-netease.md` |
-| 下载引擎/标签/ZIP | `crates/infra/src/download/` | `references/infra-download.md` |
+| 下载引擎/标签/ZIP | `crates/infra/src/download/engine/` (split PR-8) | `references/infra-download.md` |
+| Handler helpers (RAII) | `crates/adapter/src/web/helpers/` (PR-9) | — |
+| Observability | `crates/kernel/src/observability/` (PR-5) | — |
 | 持久化 | `crates/infra/src/persistence/` | `references/infra-persistence.md` |
 | 封面缓存 | `crates/infra/src/cache/` | `references/infra-cache.md` |
 | 认证/密码 | `crates/infra/src/auth/` | — |
