@@ -131,29 +131,38 @@ strip = true
 codegen-units = 1
 
 [workspace.metadata.migrate-dist]
-bins = ["netease-music-api"]
-include = [
-    "README.md",
-    "CHANGELOG.md",
-    "cookie.txt",
-    "templates/*.html",
-    "docker-compose.yml",
-    "Dockerfile",
-]
+# bins 留空：不让默认拷贝输出 `netease-music-api.exe`；改由 extra_copies 出
+# `netease-music-api-windows-x64.exe`（命名与 linux-x64 对称）
+bins = []
+# 极简配置：仅打包二进制，不带文档/zip/checksums。
+# 排除铁板层 + 启发式层默认拉的 README/LICENSE/Dockerfile/docs/templates 等。
 exclude = [
-    "docs/internal/**",
-    ".claude/lessons/**",
-    ".claude/refactor/**",
+    "README.md",
+    "README*",
+    "LICENSE*",
+    "CHANGELOG.md",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docs/**",
+    "templates/**",
+    "scripts/**",
+    "migrations/**",
+    ".env.example",
+    ".env.sample",
 ]
-checksums = ["sha256"]
-archive = ["zip"]
-build_info = true
 
-# Cross-compile 注：本配置仅打包 host 平台原生二进制（Windows on Windows /
-# Linux on Linux）。多平台分发推荐路径：
-#   1. Docker：Dockerfile 已配置（rust:1.82-slim → distroless），CI 跨架构产物
-#   2. cargo-zigbuild：宿主有 zig 时 `cargo zigbuild --release --target x86_64-unknown-linux-musl`
-#      自动用 zig 做 C 链接器，无需安装 musl-gcc / GCC 工具链
-#   3. WSL2：在 Linux 子系统内 `cargo build --release` 原生编译
-# 不在 migrate-dist 配置 [[targets]] 多平台是为了避免新机器没装 zig/cross 时
-# `migrate dist` 直接报错；实际跨架构由上述 3 条路径之一显式做。
+# Windows 二进制重命名为 -windows-x64.exe（与 Linux 命名对称）
+[[workspace.metadata.migrate-dist.extra_copies]]
+from = "target/release/netease-music-api{EXE}"
+to = "netease-music-api-windows-x64{EXE}"
+
+# Linux x64 cross-compile：用 cargo-zigbuild（zig 0.16 已装）做 C 链接器，
+# 无需 musl-gcc。post_build hook 在 Windows host 跑完后触发。
+# (migrate-dist 不原生支持 cargo zigbuild 替换 cargo build；此 hook 是绕过)
+[[workspace.metadata.migrate-dist.post_build]]
+run = "cargo zigbuild --release --target x86_64-unknown-linux-musl"
+targets = ["x86_64-pc-windows-msvc"]
+
+[[workspace.metadata.migrate-dist.extra_copies]]
+from = "target/x86_64-unknown-linux-musl/release/netease-music-api"
+to = "netease-music-api-linux-x64"
