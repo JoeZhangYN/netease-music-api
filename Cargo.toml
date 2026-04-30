@@ -89,7 +89,7 @@ wildcard_enum_match_arm = "allow"
 wildcard_imports = "allow"
 [package]
 name = "netease-music-api"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
 
 [[bin]]

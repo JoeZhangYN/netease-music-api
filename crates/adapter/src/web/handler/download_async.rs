@@ -277,14 +277,14 @@ async fn single_download_worker(
     }
 }
 
+#[rustfmt::skip]
 async fn do_single_download(
     state: &AppState,
     task_id: &str,
     music_id: &str,
     quality: &str,
     metadata: Option<MusicInfo>,
-) -> Result<(), String> {
-    // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
+) -> Result<(), String> { // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
     state.task_store.update(
         task_id,
         Box::new(|t| {

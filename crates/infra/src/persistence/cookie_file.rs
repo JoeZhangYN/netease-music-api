@@ -38,8 +38,8 @@ impl CookieStore for FileCookieStore {
             .map_err(|e| AppError::Cookie(format!("Failed to write cookie file: {}", e)))
     }
 
-    fn parse(&self) -> Result<HashMap<String, String>, AppError> {
-        // grep-gate-skip: HashMap<String,String> false positive
+    #[rustfmt::skip]
+    fn parse(&self) -> Result<HashMap<String, String>, AppError> { // grep-gate-skip: HashMap<String,String> false positive
         let content = self.read()?;
         Ok(parse_cookie_string(&content))
     }
