@@ -302,20 +302,27 @@ async fn batch_download_worker(
     let download_pct = song_pct * 9.0 / 10.0;
     let mut progress_base: f64 = 0.0;
 
-    // Prefetch: pre-parse song N+1 when song N download reaches 50%
-    let mut prefetch_handle: Option<tokio::task::JoinHandle<Option<(String, MusicInfo)>>> = None;
+    // PR-G: 2-deep prefetch — pre-parse song N+1 at 50% download + N+2 at 25%。
+    //   prefetch_n_plus_1 在下次 iter drain；prefetch_n_plus_2 在下次 iter
+    //   rotate 成 prefetch_n_plus_1。每槽 None 时才 spawn，避免重复 parse。
+    type PrefetchSlot = Option<tokio::task::JoinHandle<Option<(String, MusicInfo)>>>;
+    let mut prefetch_n_plus_1: PrefetchSlot = None;
+    let mut prefetch_n_plus_2: PrefetchSlot = None;
 
     for (i, raw_id) in ids.iter().enumerate() {
         if state.cancelled.contains_key(&task_id) {
             state.cancelled.remove(&task_id);
-            if let Some(h) = prefetch_handle.take() {
+            if let Some(h) = prefetch_n_plus_1.take() {
+                h.abort();
+            }
+            if let Some(h) = prefetch_n_plus_2.take() {
                 h.abort();
             }
             break;
         }
 
-        // --- Resolve music_id: use prefetch or resolve normally ---
-        let (music_id, prefetched_info) = if let Some(handle) = prefetch_handle.take() {
+        // --- Resolve music_id: use prefetch_n_plus_1 (for i) or resolve normally ---
+        let (music_id, prefetched_info) = if let Some(handle) = prefetch_n_plus_1.take() {
             match tokio::time::timeout(Duration::from_secs(60), handle).await {
                 Ok(Ok(Some((mid, info)))) => (mid, Some(info)),
                 _ => {
@@ -327,6 +334,9 @@ async fn batch_download_worker(
             let mid = extract_music_id(raw_id, client).await;
             (mid, None)
         };
+
+        // Rotate: prefetch_n_plus_2 (now for i+1) → prefetch_n_plus_1
+        prefetch_n_plus_1 = prefetch_n_plus_2.take();
 
         if !seen_ids.insert(music_id.clone()) {
             info!("Batch: skipping duplicate ID {}", music_id);
@@ -402,21 +412,24 @@ async fn batch_download_worker(
         let name = music_info.name.clone();
         let artists = music_info.artists.clone();
 
-        // --- Spawn prefetch for next song (triggers at 50% download) ---
+        // --- PR-G: 2-deep prefetch ---
+        // 50% trigger → prefetch_for_{i+1}（仅当前未填，rotation 已填则跳过）
+        // 25% trigger → prefetch_for_{i+2}（仅当前未填）
+        // 两个独立 AtomicBool；progress callback 同时驱动
         let half_triggered = Arc::new(AtomicBool::new(false));
+        let quarter_triggered = Arc::new(AtomicBool::new(false));
 
-        prefetch_handle = if i + 1 < ids.len() {
-            let next_raw_id = ids[i + 1].clone();
-            let trigger = half_triggered.clone();
+        // Helper: spawn prefetch task armed by `trigger`，target_raw_id 解析到 music_id
+        let spawn_prefetch = |target_raw_id: String, trigger: Arc<AtomicBool>| {
             let state_c = Arc::clone(&state);
             let quality_c = quality.clone();
             let cookies_c = cookies.clone();
             let fallback_cfg_c = fallback_cfg.clone();
-            Some(tokio::spawn(async move {
+            tokio::spawn(async move {
                 while !trigger.load(Ordering::Relaxed) {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                let mid = extract_music_id(&next_raw_id, &state_c.http_client).await;
+                let mid = extract_music_id(&target_raw_id, &state_c.http_client).await;
                 let parse_permit = match tokio::time::timeout(
                     Duration::from_secs(30),
                     state_c.parse_semaphore.acquire(),
@@ -439,10 +452,15 @@ async fn batch_download_worker(
                 state_c.stats.decrement("parse");
                 drop(parse_permit);
                 result.ok().map(|info| (mid, info))
-            }))
-        } else {
-            None
+            })
         };
+
+        if prefetch_n_plus_1.is_none() && i + 1 < ids.len() {
+            prefetch_n_plus_1 = Some(spawn_prefetch(ids[i + 1].clone(), half_triggered.clone()));
+        }
+        if prefetch_n_plus_2.is_none() && i + 2 < ids.len() {
+            prefetch_n_plus_2 = Some(spawn_prefetch(ids[i + 2].clone(), quarter_triggered.clone()));
+        }
 
         // --- Download phase ---
         let permit = match tokio::time::timeout(
@@ -456,6 +474,7 @@ async fn batch_download_worker(
                 error!("Batch: download semaphore timeout for {}", music_id);
                 failed += 1;
                 half_triggered.store(true, Ordering::Relaxed);
+                quarter_triggered.store(true, Ordering::Relaxed);
                 progress_base += download_pct;
                 continue;
             }
@@ -472,6 +491,7 @@ async fn batch_download_worker(
         let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
         if cached_size > 0 {
             half_triggered.store(true, Ordering::Relaxed);
+            quarter_triggered.store(true, Ordering::Relaxed);
             let cover_data = state.cover_cache.fetch(client, &music_info.pic_url).await;
             track_data.push(TrackData {
                 file_path,
@@ -490,6 +510,7 @@ async fn batch_download_worker(
         let name_cb = name.clone();
         let artists_cb = artists.clone();
         let trigger_cb = half_triggered.clone();
+        let quarter_cb = quarter_triggered.clone();
         let cb_base = progress_base;
         let cb_dl_pct = download_pct;
         let track_idx = i;
@@ -498,6 +519,10 @@ async fn batch_download_worker(
         let progress_cb: ProgressCallback = Arc::new(move |downloaded, total_bytes| {
             if total_bytes > 0 {
                 let file_pct = (downloaded as f64 / total_bytes as f64 * 100.0) as u32;
+                // PR-G: 25% triggers prefetch_n_plus_2; 50% triggers prefetch_n_plus_1
+                if file_pct >= 25 && !quarter_cb.load(Ordering::Relaxed) {
+                    quarter_cb.store(true, Ordering::Relaxed);
+                }
                 if file_pct >= 50 && !trigger_cb.load(Ordering::Relaxed) {
                     trigger_cb.store(true, Ordering::Relaxed);
                 }
@@ -536,6 +561,7 @@ async fn batch_download_worker(
             error!("Batch: disk space check failed for {}: {}", music_id, e);
             failed += 1;
             half_triggered.store(true, Ordering::Relaxed);
+            quarter_triggered.store(true, Ordering::Relaxed);
             state.stats.decrement("download");
             drop(permit);
             progress_base += download_pct;
@@ -556,6 +582,7 @@ async fn batch_download_worker(
         .await;
 
         half_triggered.store(true, Ordering::Relaxed);
+        quarter_triggered.store(true, Ordering::Relaxed);
 
         let mut cover_data = tokio::time::timeout(Duration::from_secs(30), cover_future)
             .await
