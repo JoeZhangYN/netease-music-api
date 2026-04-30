@@ -91,3 +91,49 @@ docker compose up -d --build        # Docker 部署
 6. [ ] 异步任务支持取消 (`state.cancelled` 检查)
 7. [ ] ARCHITECTURE.md 映射表已同步
 8. [ ] `references/` 文档已同步
+
+---
+
+## Domain SOT Exemptions
+
+`migrate scan --crosscut=domain-sot` 启发式扫描的已知误报豁免段。
+audit-source-of-truth subagent 读此段降噪。新增豁免必须写理由。
+
+```yaml
+# multi_write_path 误报：admin.rs 涉及 N entity 持久化（cookie / stats /
+# config / cover_cache / task / hooks-log），不同 entity 有独立写入路径，
+# 合并会破坏分层。
+- pattern: 'multi_write_path.*admin\.rs'
+  reason: "多 entity 持久化路径，按聚合根分离合理"
+
+# concurrency 字段三处比较误报：admin handler 内 validate(rc) +
+# state.parse_semaphore_cap.store() 两处比较是 validate-vs-apply 双语义，
+# 合并会丢失"先校验再生效"的双重保护。
+- pattern: 'repeated_comparison.*field=(parse|download|batch)_concurrency'
+  reason: "validate-then-apply 双语义比较，合理保留"
+
+# file_type=flac 误报：music_info.rs determine_file_extension 用字符串
+# 是 v3 妥协。v4 plan 已列入 typestate (FileType enum) 重构项。
+- pattern: 'repeated_comparison.*field=flac'
+  reason: "v4 deferred — typestate FileType enum 整体替换"
+
+# created_at 误报：task_memory.rs TTL 检查（now - created_at > ttl）+
+# 测试断言两处。语义不同，不合并。
+- pattern: 'repeated_comparison.*field=created_at'
+  reason: "TTL check vs test assertion, 不同语义"
+
+# rate_limit_burst 误报：runtime_config.rs validate() 内 +
+# tests/runtime_config_validate.rs proptest 计算 effective_burst。
+# 合理保留——配置规则在 SOT，测试单独验证。
+- pattern: 'repeated_comparison.*field=rate_limit_burst'
+  reason: "validate 单源 + proptest 跨字段约束，合理"
+
+# album/playlist/search trim+to_lowercase 16 处：handler 入参标准化散布。
+# 跨 N 路由的输入清洗，每路由参数语义不同（album_id / playlist_id /
+# search_keyword），共用 helper 风险大于收益。
+- pattern: 'repeated_normalize.*album\.rs'
+  reason: "多路由入参标准化各有语义，不合并"
+```
+
+> **未豁免的真问题** (PR-D 已修)：`stage` 状态比较散布 → 抽
+> `TaskStage::is_reusable_for_dedup` / `is_downloadable_to_user` helper。

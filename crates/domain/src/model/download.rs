@@ -130,6 +130,22 @@ impl TaskStage {
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Done | Self::Error | Self::Retrieved)
     }
+
+    /// PR-D — dedup 复用判定：相同 (music_id, quality) 已有任务时是否复用。
+    ///
+    /// 语义：**非已失败 + 非已取走** → 任务正在工作中或刚完成等待取走，
+    /// 复用避免重复下载。`Done` **包括**（用户还没取走，可继续等）。
+    pub fn is_reusable_for_dedup(&self) -> bool {
+        !matches!(self, Self::Error | Self::Retrieved)
+    }
+
+    /// PR-D — zip 取走判定：用户访问 `/result/{task_id}` 时任务是否能取走。
+    ///
+    /// 语义：**已下载完成（含已取过一次）**。`Done` 第一次取走会 transition 到
+    /// `Retrieved`，此后仍允许取（重复下载链接），但前端 UI 会显示"已取走"。
+    pub fn is_downloadable_to_user(&self) -> bool {
+        matches!(self, Self::Done | Self::Retrieved)
+    }
 }
 
 impl std::fmt::Display for TaskStage {

@@ -57,7 +57,7 @@ pub async fn download_start(
     if let Some(existing) = state.dedup.get(&dedup_key) {
         let existing_task_id = existing.value().clone();
         if let Some(task) = state.task_store.get(&existing_task_id) {
-            if task.stage != TaskStage::Error && task.stage != TaskStage::Retrieved {
+            if task.stage.is_reusable_for_dedup() {
                 return APIResponse::success(
                     json!({"task_id": existing_task_id}),
                     "已有相同下载任务，正在复用",
@@ -167,7 +167,7 @@ pub async fn download_result(
         None => return APIResponse::error("任务不存在或已过期", 404).into_response(),
     };
 
-    if task.stage != TaskStage::Done && task.stage != TaskStage::Retrieved {
+    if !task.stage.is_downloadable_to_user() {
         return APIResponse::error("任务尚未完成", 400).into_response();
     }
 

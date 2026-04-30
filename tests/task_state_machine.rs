@@ -1,3 +1,6 @@
+// file-size-gate: exempt PR-D — TaskStage 状态机所有边界（terminal / 转换矩阵 /
+//   生命周期 / dedup / downloadable）测试集中一文件，按职责单一不应拆分
+
 use netease_domain::model::download::{TaskInfo, TaskStage};
 
 // --- TaskStage::is_terminal correctness ---
@@ -37,6 +40,30 @@ fn exhaustive_terminal_check() {
         non_terminal_count, 4,
         "Exactly 4 stages should be non-terminal"
     );
+}
+
+// --- PR-D: dedup / downloadable helpers ---
+
+#[test]
+fn is_reusable_for_dedup_excludes_error_and_retrieved() {
+    assert!(!TaskStage::Error.is_reusable_for_dedup());
+    assert!(!TaskStage::Retrieved.is_reusable_for_dedup());
+    assert!(TaskStage::Starting.is_reusable_for_dedup());
+    assert!(TaskStage::FetchingUrl.is_reusable_for_dedup());
+    assert!(TaskStage::Downloading.is_reusable_for_dedup());
+    assert!(TaskStage::Packaging.is_reusable_for_dedup());
+    assert!(TaskStage::Done.is_reusable_for_dedup());
+}
+
+#[test]
+fn is_downloadable_to_user_only_done_and_retrieved() {
+    assert!(TaskStage::Done.is_downloadable_to_user());
+    assert!(TaskStage::Retrieved.is_downloadable_to_user());
+    assert!(!TaskStage::Starting.is_downloadable_to_user());
+    assert!(!TaskStage::FetchingUrl.is_downloadable_to_user());
+    assert!(!TaskStage::Downloading.is_downloadable_to_user());
+    assert!(!TaskStage::Packaging.is_downloadable_to_user());
+    assert!(!TaskStage::Error.is_downloadable_to_user());
 }
 
 // --- TaskStage Display ---
