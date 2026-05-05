@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-05-05
+
+下载/解析偶发失败硬化 + audit-all 闭合 patch release。用户面闭合"卡 90%+"与"退避似乎没生效"两类报告；workspace.package 单源化为后续版本 bump 简化。
+
 ### Fixed
 - **下载/解析偶发失败硬化（PR-K，5 修复）** — 用户报告"卡 90%+" + "退避似乎没生效"诊断后定位 5 个独立根因：
   1. **HTTP 200 + 网易云风控 body code=-460/-461/-301 在 HTTP 层主动 peek 识别（E1）（invariant #19）** — 之前 `client.rs::request_with_retry` 仅在 status≠200 时 peek body；网易云 200+code=-460 直接放行到应用层才识别，错过 retry budget。新增 `HttpFailureKind::from_response_body_200` + 200 路径 peek，命中即触发 `with_retry`。`request_with_retry` 返值由 `Response` 改为 `String`（已读完 body），`post_eapi`/`post_form`/`get_json` 删除内部 `.text()` 调用。这是"退避似乎没生效"用户感知的核心根因。
@@ -33,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deferred to future PRs
 - **C: `.part` chunk-level resume**（"卡 90%+"剩余用户感知核心根因）— 涉及 `.part` 文件元数据 schema 演化（铁律 §9 双阶段 additive），单独 plan + 单独 PR
-- **HttpClient 改实例方法持有 RetryPolicy**：让用户管理面板 `max_retries` 实时生效；当前 ranged/single_stream/HttpClient 仍走 `default_for_profile` 不消费 admin 调整
+- **解析侧 / 封面缓存 HttpClient 真消费 `max_retries`** — 下载侧 ranged/single_stream/wrapper 已 PR-K2 commit 2 交付（`for_profile_with_max_retries(config.max_retries, _)`）；剩余 `crates/infra/src/netease/client.rs::HttpClient::new` + `crates/infra/src/cache/cover_cache.rs::CoverCache::new` 仍走 `default_for_profile` 不消费 admin 调整。需 plumb `&AppConfig` 或显式 `max_retries` 参数到这两个 ctor，单独 PR
 - **stall watchdog / URL refresher**（CHANGELOG 已标 deferred to v4 FSM）
 
 ## [3.0.1] - 2026-04-30
