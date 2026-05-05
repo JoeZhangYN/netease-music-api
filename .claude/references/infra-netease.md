@@ -73,7 +73,9 @@ pub fn default_cookies() -> HashMap<String, String>;
 ```rust
 pub struct HttpClient;
 impl HttpClient {
-    pub async fn request_with_retry(client, method, url, form_data, headers, cookies) -> Result<Response, AppError>;
+    pub async fn request_with_retry(client, method, url, form_data, headers, cookies) -> Result<String, AppError>;
+    // PR-K E1: 200 路径主动 peek body code=-460/-461/-301 触发 with_retry，
+    //         返值由 Response 改 String（已读完 body）。
     pub async fn post_eapi(client, url, params, cookies) -> Result<String, AppError>;
     pub async fn post_form(client, url, form_data, cookies) -> Result<Value, AppError>;
     pub async fn get_json(client, url, cookies) -> Result<Value, AppError>;

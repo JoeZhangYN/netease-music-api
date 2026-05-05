@@ -117,7 +117,11 @@ mod tests {
         // → for_with_max(1, Parse) → 1 retry → 2 attempts
         let rc = rc_with_max_retries(0);
         let p = RetryPolicy::from_runtime_config(&rc, ClientProfile::Parse);
-        assert_eq!(p.backoff.len(), 1, "至少保留 1 次重试（from_runtime_config 兜底）");
+        assert_eq!(
+            p.backoff.len(),
+            1,
+            "至少保留 1 次重试（from_runtime_config 兜底）"
+        );
     }
 
     #[test]

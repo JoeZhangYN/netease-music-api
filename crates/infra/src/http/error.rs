@@ -146,19 +146,22 @@ mod tests {
     #[test]
     fn from_response_429_maps_to_quota() {
         let kind = HttpFailureKind::from_response(StatusCode::TOO_MANY_REQUESTS, b"").unwrap();
-        matches!(kind, HttpFailureKind::Quota { .. });
+        assert!(matches!(kind, HttpFailureKind::Quota { .. }));
     }
 
     #[test]
     fn from_response_5xx_maps_to_server_error() {
         let kind = HttpFailureKind::from_response(StatusCode::INTERNAL_SERVER_ERROR, b"").unwrap();
-        matches!(kind, HttpFailureKind::Server5xx { status: 500 });
+        assert!(matches!(kind, HttpFailureKind::Server5xx { status: 500 }));
+        if let HttpFailureKind::Server5xx { status } = kind {
+            assert_eq!(status, 500);
+        }
     }
 
     #[test]
     fn from_response_401_maps_to_auth_expired() {
         let kind = HttpFailureKind::from_response(StatusCode::UNAUTHORIZED, b"").unwrap();
-        matches!(kind, HttpFailureKind::AuthExpired);
+        assert!(matches!(kind, HttpFailureKind::AuthExpired));
     }
 
     #[test]
@@ -176,7 +179,13 @@ mod tests {
     #[test]
     fn from_response_4xx_other_maps_to_permanent() {
         let kind = HttpFailureKind::from_response(StatusCode::NOT_FOUND, b"").unwrap();
-        matches!(kind, HttpFailureKind::Permanent4xx { status: 404 });
+        assert!(matches!(
+            kind,
+            HttpFailureKind::Permanent4xx { status: 404 }
+        ));
+        if let HttpFailureKind::Permanent4xx { status } = kind {
+            assert_eq!(status, 404);
+        }
     }
 
     #[test]
@@ -186,7 +195,7 @@ mod tests {
         // 同样，200 + body 由调用方主动 peek 判断；这里测 401 路径
         assert!(kind.is_none());
         let kind401 = HttpFailureKind::from_response(StatusCode::UNAUTHORIZED, body).unwrap();
-        matches!(kind401, HttpFailureKind::AuthExpired);
+        assert!(matches!(kind401, HttpFailureKind::AuthExpired));
     }
 
     // PR-K E1: from_response_body_200 单测 — 200 路径主动 peek 风控码

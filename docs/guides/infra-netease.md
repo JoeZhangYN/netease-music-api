@@ -69,17 +69,19 @@ pub struct HttpClient; // 无实例字段
 
 | 方法 | 返回类型 | 用途 |
 |------|----------|------|
-| `request_with_retry` | `Result<Response>` | 通用重试逻辑 |
+| `request_with_retry` | `Result<String>` | 通用重试逻辑（PR-K E1：200 路径已 peek body code，返值改 String） |
 | `post_eapi` | `Result<String>` | EAPI 加密请求, 返回原始文本 |
 | `post_form` | `Result<Value>` | 表单 POST, 返回 JSON |
 | `get_json` | `Result<Value>` | GET 请求, 返回 JSON |
 
 ### 重试策略
 
-```rust
-const MAX_RETRIES: usize = 3;
-const RETRY_DELAYS_MS: [u64; 3] = [500, 1000, 2000];
-```
+<!-- DO NOT EDIT — see crates/infra/src/http/retry/policy.rs::DEFAULT_BACKOFF / RetryPolicy -->
+
+退避表 SOT：`crates/infra/src/http/retry/policy.rs::DEFAULT_BACKOFF = [500, 1000, 2000, 4000, 8000]ms`。
+解析侧（Parse profile）取前 2 阶 = 2 retries / 3 attempts；下载侧（Download profile）全 4 阶 = 4 retries / 5 attempts。
+PR-K B 之后所有 RetryPolicy 构造统一走 `for_profile_with_max_retries(max_retries, profile)` SOT ctor。
+PR-K2 在 backoff fallback 路径加 ±50% jitter 防 thundering herd（`with_retry::apply_jitter`）。
 
 - 重试条件: 5xx 服务端错误, timeout, connect 错误
 - 200 和 206 视为成功

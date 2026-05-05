@@ -4,11 +4,24 @@ use std::future::Future;
 use std::time::Duration;
 
 use netease_kernel::observability::LogEvent;
+use rand::Rng;
 use tracing::warn;
 
 use crate::http::error::HttpFailureKind;
 
 use super::policy::RetryPolicy;
+
+/// Apply ±50% jitter to a backoff duration.
+///
+/// PR-K2: 防 thundering herd——批量场景多客户端同时触发瞬态错（CDN 5xx /
+/// 网易云 -460 风控）时，固定退避表会让重试同步发出加深限流。仅在 backoff
+/// fallback 路径应用，**不**对 `retry_after` 服务端建议加 jitter（服务端建议
+/// 尊重原值，铁律 §10）。
+fn apply_jitter(base: Duration) -> Duration {
+    let factor: f64 = rand::thread_rng().gen_range(0.5..=1.5);
+    let ms = (base.as_millis() as f64 * factor) as u64;
+    Duration::from_millis(ms)
+}
 
 /// 单源 retry helper。
 ///
@@ -37,10 +50,19 @@ where
                     last_err = Some(kind);
                     break;
                 }
-                let wait = kind
-                    .retry_after()
-                    .or_else(|| policy.backoff.get(attempt).copied())
-                    .unwrap_or(Duration::from_millis(500));
+                // 服务端 Retry-After 优先且不打 jitter（铁律 §10：尊重服务端建议原值）；
+                // fallback 到本地 backoff 表时应用 ±50% jitter 防 thundering herd。
+                let wait = match kind.retry_after() {
+                    Some(server_hint) => server_hint,
+                    None => {
+                        let base = policy
+                            .backoff
+                            .get(attempt)
+                            .copied()
+                            .unwrap_or(Duration::from_millis(500));
+                        apply_jitter(base)
+                    }
+                };
                 warn!(
                     event = %LogEvent::ApiRetry,
                     attempt = attempt + 1,
