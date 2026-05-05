@@ -95,7 +95,7 @@ impl RuntimeConfig {
     }
 
     #[rustfmt::skip]
-    pub fn validate(&self) -> Result<(), String> { // grep-gate-skip: 简单 validation 用 String error 充分；调用方仅 .is_ok() / log
+    pub fn validate(&self) -> Result<(), String> { // grep-gate-skip: 错误经 admin handler `APIResponse::error(&msg, 400)` 直接回 HTTP body 给管理员；管理员预期看 dev-style 英文文本，typed enum 收益极低
         if self.parse_concurrency < 1 || self.parse_concurrency > 50 {
             return Err("parse_concurrency must be 1..50".into());
         }

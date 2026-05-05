@@ -7,13 +7,12 @@
 //! 瞬态可重试（与 pre-PR-C 行为等价）。
 
 use std::path::Path;
-use std::time::Duration;
 
 use reqwest::Client;
 
 use netease_kernel::error::AppError;
 
-use crate::http::{with_retry, HttpFailureKind, RetryPolicy, DEFAULT_BACKOFF};
+use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 
 use super::ProgressCallback;
 
@@ -27,21 +26,16 @@ fn classify(e: AppError) -> HttpFailureKind {
     }
 }
 
+// PR-K B: max_retries 参数已删除。RetryPolicy 构造统一走 RetryPolicy::default_for_profile
+// (SOT 单源 in policy.rs::for_profile_with_max_retries)。
 pub(super) async fn download_single_stream(
     client: &Client,
     url: &str,
     file_path: &Path,
     content_length: u64,
     on_progress: Option<ProgressCallback>,
-    max_retries: usize,
 ) -> Result<(), AppError> {
-    let n = max_retries.min(DEFAULT_BACKOFF.len()).max(1);
-    let backoff: Vec<Duration> = DEFAULT_BACKOFF
-        .iter()
-        .take(n.saturating_sub(1)) // backoff len = attempts-1
-        .map(|ms| Duration::from_millis(*ms))
-        .collect();
-    let policy = RetryPolicy { backoff };
+    let policy = RetryPolicy::default_for_profile(ClientProfile::Download);
 
     with_retry(&policy, || async {
         download_stream_once(client, url, file_path, content_length, &on_progress)

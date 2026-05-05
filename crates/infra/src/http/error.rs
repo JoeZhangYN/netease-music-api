@@ -64,6 +64,25 @@ impl HttpFailureKind {
         }
     }
 
+    /// PR-K E1：HTTP 200 + body 检测网易云风控码（-460/-461/-301）。
+    ///
+    /// 网易云风控不返 4xx，而是 HTTP 200 + body `{"code":-460,...}`。
+    /// `from_response` 在 200 status 时返 None（成功路径快出口），
+    /// 本 helper 专为 200 路径设计：调用方读完 body 后 peek 头 200 字节调本函数。
+    ///
+    /// 命中即触发 `with_retry` 重试（QuotaHit）或不重试（AuthExpired）。
+    /// 未命中（普通 200 成功响应）→ None，调用方继续正常处理。
+    pub fn from_response_body_200(body_peek: &[u8]) -> Option<Self> {
+        let body_str = std::str::from_utf8(body_peek).unwrap_or("");
+        if body_str.contains("\"code\":-301") {
+            return Some(HttpFailureKind::AuthExpired);
+        }
+        if body_str.contains("\"code\":-460") || body_str.contains("\"code\":-461") {
+            return Some(HttpFailureKind::Quota { retry_after: None });
+        }
+        None
+    }
+
     /// 从响应状态 + body peek 分类。识别网易云专属风控码（-460/-461/-301）。
     /// `body_peek` 限 200 字节防 OOM，调用方负责截断。
     pub fn from_response(status: StatusCode, body_peek: &[u8]) -> Option<Self> {
@@ -168,5 +187,55 @@ mod tests {
         assert!(kind.is_none());
         let kind401 = HttpFailureKind::from_response(StatusCode::UNAUTHORIZED, body).unwrap();
         matches!(kind401, HttpFailureKind::AuthExpired);
+    }
+
+    // PR-K E1: from_response_body_200 单测 — 200 路径主动 peek 风控码
+    #[test]
+    fn from_body_200_minus_460_is_quota() {
+        let body = br#"{"code":-460,"msg":"Cheating"}"#;
+        let kind = HttpFailureKind::from_response_body_200(body).unwrap();
+        assert!(matches!(kind, HttpFailureKind::Quota { .. }));
+        assert!(kind.is_retryable(), "-460 必须 is_retryable");
+    }
+
+    #[test]
+    fn from_body_200_minus_461_is_quota() {
+        let body = br#"{"code":-461}"#;
+        let kind = HttpFailureKind::from_response_body_200(body).unwrap();
+        assert!(matches!(kind, HttpFailureKind::Quota { .. }));
+    }
+
+    #[test]
+    fn from_body_200_minus_301_is_auth_expired() {
+        let body = br#"{"code":-301,"msg":"deactivated"}"#;
+        let kind = HttpFailureKind::from_response_body_200(body).unwrap();
+        assert!(matches!(kind, HttpFailureKind::AuthExpired));
+        assert!(!kind.is_retryable(), "auth 错不重试");
+    }
+
+    #[test]
+    fn from_body_200_normal_response_returns_none() {
+        // 普通成功响应不应误识别
+        let body = br#"{"code":200,"data":[{"id":12345}]}"#;
+        assert!(HttpFailureKind::from_response_body_200(body).is_none());
+    }
+
+    #[test]
+    fn from_body_200_empty_body_returns_none() {
+        assert!(HttpFailureKind::from_response_body_200(b"").is_none());
+    }
+
+    #[test]
+    fn from_body_200_invalid_utf8_does_not_panic() {
+        // attacker 视角：byte slice 含非 UTF-8 bytes，不应 panic
+        let body = &[0xFF, 0xFE, 0xFD, 0xFC];
+        assert!(HttpFailureKind::from_response_body_200(body).is_none());
+    }
+
+    #[test]
+    fn from_body_200_msg_with_460_no_false_positive() {
+        // 字符串相似但 key 不是 "code" 的不应触发（要求 `"code":-460` 完整子串）
+        let body = br#"{"msg":"server returned -460 message"}"#;
+        assert!(HttpFailureKind::from_response_body_200(body).is_none());
     }
 }

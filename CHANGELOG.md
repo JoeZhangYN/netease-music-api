@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **下载/解析偶发失败硬化（PR-K，5 修复）** — 用户报告"卡 90%+" + "退避似乎没生效"诊断后定位 5 个独立根因：
+  1. **HTTP 200 + 网易云风控 body code=-460/-461/-301 在 HTTP 层主动 peek 识别（E1）** — 之前 `client.rs::request_with_retry` 仅在 status≠200 时 peek body；网易云 200+code=-460 直接放行到应用层才识别，错过 retry budget。新增 `HttpFailureKind::from_response_body_200` + 200 路径 peek，命中即触发 `with_retry`。`request_with_retry` 返值由 `Response` 改为 `String`（已读完 body），`post_eapi`/`post_form`/`get_json` 删除内部 `.text()` 调用。这是"退避似乎没生效"用户感知的核心根因。
+  2. **`fetch_range` 永久错快速失败（A）** — 之前仅识别 503，4xx（403/404/410，CDN signed URL 过期典型 status）走 bytes() 路径触发"short read"被错当瞬态反复 retry 5 次。改为 `Result<Vec<u8>, HttpFailureKind>` 通过 `from_response` 按 status 分类，4xx 永久错立即 propagate 不浪费 retry budget。这是"卡 90%+"最后一 chunk 反复失败的核心根因之一。
+  3. **`RetryPolicy` SOT 单源（B）** — `policy.rs::from_runtime_config` / `default_for_profile` / `ranged.rs::build_policy` / `single_stream` 内联构造四套退避数学不一致（违反铁律 §3.2）。统一收敛到 `RetryPolicy::for_profile_with_max_retries(max_retries, profile)` 单源 ctor；删除 `build_policy` + `single_stream` 内联；`max_retries` 语义统一为"retry 次数"（不含首次 attempt），baseline Parse=2/Download=4 retries。`single_stream` 与 `ranged_remaining_pwrite` 不再接 `max_retries` 参数。
+  4. **ranged 第一 probe `with_retry` 包装（D）** — 之前 send 失败立即 fallback 到 single_stream，瞬时网络抖动浪费 ranged 优化。新增 probe-level retry：transient 失败重试，4xx 永久错立即 propagate（不 fallback），仅 transient 全部 attempt 用完后才 fallback。
+  5. **api.rs 5 处 typed 错误分类（E3）** — `get_song_detail` / `get_lyric` / `search` / `get_playlist` / `get_album` 之前对 `code != 200` 粗糙归 `AppError::Api("XXX failed")` 丢失 -460 typed 信息。改为统一调 `classify_netease_code(code, msg)` 路由到 `ApiError::QuotaHit` / `AuthExpired` / `NeteaseCode`。批量场景任一方法触发 -460 时上游可正确识别为 `RateLimited` 走 retry，而非用户面立即报错。
+- 配套测试：`HttpFailureKind::from_response_body_200` 新增 6 unit test（含 attacker 视角 invalid utf8 / 空 body / 部分匹配假阳性）；`RetryPolicy` 新增 SOT alignment test（`for_profile_max_retries(0)` ≡ `default_for_profile`）。
+
+### Changed
+- **Cargo workspace `version` 单源化** — root `Cargo.toml` 引入 `[workspace.package]` block（`version` + `edition`），4 个 member crate 改用 `version.workspace = true` / `edition.workspace = true` 继承，与现有 `[lints] workspace = true` 风格对齐。下次 bump 只改一处，消除"5 处字面量同步"靠人工纪律保活的 SOT 漂移风险。
+- **`grep-gate-skip` 豁免注释精确化** — 两处 `Result<(), String>` 函数的 trailing exemption 注释原措辞（"调用方仅 .is_ok() / log"、"调用方仅 log"）与实际调用方行为不符（错误回到 HTTP 400 body / task polling 给前端）。改为反映真实 user-facing 路径 + 链接 v4 FSM/DownloadOutcome deferred 计划：
+  - `crates/kernel/src/runtime_config.rs::RuntimeConfig::validate`
+  - `crates/adapter/src/web/handler/download_async.rs::do_single_download`
+
+### Tuning notes（高并发批量场景）
+- 批量场景（`batch_max_songs > 50`）建议管理面板 `/admin/config` 把默认 `rate_limit_rps_per_user=10` / `rate_limit_burst=20` 调高（建议 `rps=20` / `burst=40`），减少 `GovernorLimiter` 兜底 fall-through 静默放行频率（`governor_limiter.rs:100-110`）—— 否则 batch=100 + parse_concurrency=5 = 20 RPS 超过默认 burst 桶时 governor 在 300ms timeout 后直接放行，下游撞网易云 -460 风控。本轮 PR-K E1 让 -460 在 HTTP 层正确触发 retry，配合调高 burst 双管齐下。
+
+### Deferred to future PRs
+- **C: `.part` chunk-level resume**（"卡 90%+"剩余用户感知核心根因）— 涉及 `.part` 文件元数据 schema 演化（铁律 §9 双阶段 additive），单独 plan + 单独 PR
+- **HttpClient 改实例方法持有 RetryPolicy**：让用户管理面板 `max_retries` 实时生效；当前 ranged/single_stream/HttpClient 仍走 `default_for_profile` 不消费 admin 调整
+- **stall watchdog / URL refresher**（CHANGELOG 已标 deferred to v4 FSM）
+
+## [3.0.1] - 2026-04-30
+
+### Changed
+- CI: bumped `actions/checkout@v4` → `@v5`（GitHub Node.js 24 readiness；v4 已 deprecated）。
+
+### Fixed
+- **`cargo fmt` 静默拆开 grep-gate-skip 豁免**修复。v3.0.0 的 `cargo fmt --all` cleanup 把三处函数签名上的行内 trailing `// grep-gate-skip:` 注释折到下一行，导致 grep-gate 启发式扫描器（按行匹配 `Result<(), String>` 同行 trailing 豁免标记）失效——豁免点变"沉默漂移"。本版本对受影响函数加 `#[rustfmt::skip]` attribute，让 fmt 不重排该签名，trailing 注释回归同行：
+  - `crates/adapter/src/web/handler/download_async.rs::do_single_download`
+  - `crates/infra/src/persistence/cookie_file.rs::FileCookieStore::parse`
+  - `crates/kernel/src/runtime_config.rs::RuntimeConfig::validate`
+
+### Notes
+- Patch release：纯 CI / fmt 兼容硬化；无业务行为变化。
+- 此版本 commit `d21aa39` 同步 5 处 `Cargo.toml` 字面量 bump 到 `3.0.1`——`[Unreleased]` 段已立项把这 5 副本迁移到 `[workspace.package]` 单源，下一版本起删字面量。
+
+## [3.0.0] - 2026-04-30
+
+底层重构 + critical-bug 修复 release（PR-1~13 + bottom-up A~J）。用户面 critical bug 全修 + 类型驱动基础设施铺设；FSM / typestate / DownloadOutcome 等核心类型设计 deferred 到 v4。
+
 ### Added
 - CI workflow (`.github/workflows/ci.yml`) running `cargo fmt --check` / `cargo clippy -D warnings` / `cargo test --workspace` / `cargo build --release` on Linux + Windows.
 - Workspace lints block in root `Cargo.toml` (`[workspace.lints.rust]` + `[workspace.lints.clippy]`); each crate inherits via `[lints] workspace = true`.
@@ -509,5 +551,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Initial Rust/Axum rewrite of the Netease Cloud Music API tool.
 DDD + hexagonal architecture; jQuery + APlayer frontend.
 
-[Unreleased]: https://github.com/JoeZhangYN/netease-music-api/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/JoeZhangYN/netease-music-api/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/JoeZhangYN/netease-music-api/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/JoeZhangYN/netease-music-api/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/JoeZhangYN/netease-music-api/releases/tag/v2.0.0

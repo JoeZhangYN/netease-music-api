@@ -62,15 +62,7 @@ pub async fn download_file_ranged(
         )
         .await
     } else {
-        download_single_stream(
-            dl,
-            url,
-            &part_path,
-            content_length,
-            on_progress,
-            config.max_retries,
-        )
-        .await
+        download_single_stream(dl, url, &part_path, content_length, on_progress).await
     };
 
     match result {

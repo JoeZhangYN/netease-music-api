@@ -284,7 +284,7 @@ async fn do_single_download(
     music_id: &str,
     quality: &str,
     metadata: Option<MusicInfo>,
-) -> Result<(), String> { // grep-gate-skip: spawn worker error 上报字符串足够，调用方仅 log
+) -> Result<(), String> { // grep-gate-skip: 错误既 log 也写 t.error 供前端 polling 显示；typed 升级 deferred 到 v4 FSM/DownloadOutcome (见 CHANGELOG "Deferred to v4")
     state.task_store.update(
         task_id,
         Box::new(|t| {

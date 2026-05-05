@@ -115,8 +115,16 @@ impl MusicApi for NeteaseApi {
         let empty = HashMap::new();
         let result = HttpClient::post_form(&self.client, SONG_DETAIL_V3, form, &empty).await?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
-            return Err(AppError::Api("Get song detail failed".into()));
+        // PR-K E3: typed 错误分类——code != 200 走 classify_netease_code，
+        //   让 -460/-461/-301 等风控/auth 错被上游按 typed 决策（重试 / 重新登录 /
+        //   降级）而非粗糙归 AppError::Api(String) 丢失类型信息。
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
+            let msg = result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
         Ok(result)
@@ -141,8 +149,14 @@ impl MusicApi for NeteaseApi {
 
         let result = HttpClient::post_form(&self.client, LYRIC_API, form, cookies).await?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
-            return Err(AppError::Api("Get lyric failed".into()));
+        // PR-K E3: typed 错误分类（同 get_song_detail）
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
+            let msg = result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
         Ok(result)
@@ -162,8 +176,14 @@ impl MusicApi for NeteaseApi {
 
         let result = HttpClient::post_form(&self.client, SEARCH_API, form, cookies).await?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
-            return Err(AppError::Api("Search failed".into()));
+        // PR-K E3: typed 错误分类
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
+            let msg = result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
         let songs = result
@@ -225,8 +245,14 @@ impl MusicApi for NeteaseApi {
         let result =
             HttpClient::post_form(&self.client, PLAYLIST_DETAIL_API, form, cookies).await?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
-            return Err(AppError::Api("Get playlist detail failed".into()));
+        // PR-K E3: typed 错误分类
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
+            let msg = result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
         let playlist = result.get("playlist").cloned().unwrap_or(json!({}));
@@ -304,8 +330,14 @@ impl MusicApi for NeteaseApi {
         let url = format!("{}{}", ALBUM_DETAIL_API, album_id);
         let result = HttpClient::get_json(&self.client, &url, cookies).await?;
 
-        if result.get("code").and_then(|v| v.as_i64()) != Some(200) {
-            return Err(AppError::Api("Get album detail failed".into()));
+        // PR-K E3: typed 错误分类
+        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        if code != 200 {
+            let msg = result
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
         let album = result.get("album").cloned().unwrap_or(json!({}));

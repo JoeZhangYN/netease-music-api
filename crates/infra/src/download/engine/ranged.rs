@@ -9,7 +9,6 @@
 
 use std::io::SeekFrom;
 use std::path::Path;
-use std::time::Duration;
 
 use reqwest::Client;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -17,25 +16,23 @@ use tracing::warn;
 
 use netease_kernel::error::AppError;
 
-use crate::http::{with_retry, HttpFailureKind, RetryPolicy, DEFAULT_BACKOFF};
+use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 
 use super::single_stream::{download_single_stream, stream_response_to_file};
 use super::{DownloadConfig, ProgressCallback};
 
-/// 构造与 max_retries 配套的 RetryPolicy（取 DEFAULT_BACKOFF 前 N-1 阶）。
-fn build_policy(max_retries: usize) -> RetryPolicy {
-    let n = max_retries.min(DEFAULT_BACKOFF.len()).max(1);
-    let backoff: Vec<Duration> = DEFAULT_BACKOFF
-        .iter()
-        .take(n.saturating_sub(1))
-        .map(|ms| Duration::from_millis(*ms))
-        .collect();
-    RetryPolicy { backoff }
-}
+// PR-K B: build_policy 已删除——RetryPolicy 构造统一走 RetryPolicy::default_for_profile
+// (SOT 单源 in policy.rs::for_profile_with_max_retries)。max_retries 当前未实时传播
+// （留给后续 PR），先用 default_for_profile(Download) 与 single_stream 对齐。
 
 /// For large files: first Range GET doubles as probe and first chunk download.
 /// If 206 → Range supported, download remaining chunks in parallel.
 /// If 200/203 → Range not supported, stream this response directly (no wasted request).
+///
+/// PR-K D: 第一 Range GET 用 `with_retry` 包装——瞬时 Network/Timeout/5xx 重试，
+///   永久错（4xx）通过 `HttpFailureKind::Permanent4xx` 立即 propagate（不 fallback 到
+///   single_stream，避免对 4xx 的"Range 不支持"误判）。仅 reqwest 层 send 失败时才
+///   fallback 到 single_stream（连接级别问题）。
 pub(super) async fn download_adaptive(
     client: &Client,
     url: &str,
@@ -45,27 +42,50 @@ pub(super) async fn download_adaptive(
     config: &DownloadConfig,
 ) -> Result<(), AppError> {
     let ranged_threads = config.ranged_threads;
-    let max_retries = config.max_retries;
     let chunk_size = content_length / ranged_threads as u64;
     let first_end = chunk_size - 1;
 
-    let resp = match client
-        .get(url)
-        .header("Range", format!("bytes=0-{}", first_end))
-        .send()
-        .await
-    {
+    let probe_policy = RetryPolicy::default_for_profile(ClientProfile::Download);
+    let probe_result: Result<reqwest::Response, HttpFailureKind> =
+        with_retry(&probe_policy, || async {
+            let resp = client
+                .get(url)
+                .header("Range", format!("bytes=0-{}", first_end))
+                .send()
+                .await
+                .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
+            let status = resp.status();
+            if status.is_success() || status.as_u16() == 203 {
+                Ok(resp)
+            } else if status.is_server_error() {
+                Err(HttpFailureKind::Server5xx {
+                    status: status.as_u16(),
+                })
+            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                Err(HttpFailureKind::AuthExpired)
+            } else {
+                // 4xx 永久错（403/404/410/etc）— is_retryable=false → with_retry 立即 propagate
+                Err(HttpFailureKind::Permanent4xx {
+                    status: status.as_u16(),
+                })
+            }
+        })
+        .await;
+
+    let resp = match probe_result {
         Ok(r) => r,
+        Err(kind) if !kind.is_retryable() => {
+            // 永久错（4xx / AuthExpired）不 fallback：上层应让用户重新 fetch URL 或换 quality
+            return Err(AppError::Download(format!(
+                "Range probe permanent error: {}",
+                kind
+            )));
+        }
         Err(_) => {
-            return download_single_stream(
-                client,
-                url,
-                file_path,
-                content_length,
-                on_progress,
-                max_retries,
-            )
-            .await;
+            // retry 全部 attempt 后仍 transient 失败 → fallback 到 single_stream
+            // 给 single_stream 一次"换连接路径试试"的机会
+            return download_single_stream(client, url, file_path, content_length, on_progress)
+                .await;
         }
     };
 
@@ -90,22 +110,13 @@ pub(super) async fn download_adaptive(
             first_data,
             chunk_size,
             ranged_threads,
-            max_retries,
             on_progress,
         )
         .await
     } else if status == 200 || status == 203 {
         stream_response_to_file(resp, file_path, content_length, on_progress).await
     } else {
-        download_single_stream(
-            client,
-            url,
-            file_path,
-            content_length,
-            on_progress,
-            max_retries,
-        )
-        .await
+        download_single_stream(client, url, file_path, content_length, on_progress).await
     }
 }
 
@@ -121,7 +132,6 @@ async fn download_remaining_and_pwrite(
     first_data: Vec<u8>,
     chunk_size: u64,
     ranged_threads: usize,
-    max_retries: usize,
     on_progress: Option<ProgressCallback>,
 ) -> Result<(), AppError> {
     // 预分配 .part 文件至 content_length（pwrite 到 offset 需文件已具该长度）
@@ -177,31 +187,34 @@ async fn download_remaining_and_pwrite(
         let downloaded_total = downloaded_total.clone();
         let on_progress = on_progress.clone();
         let cl = content_length;
-        let policy = build_policy(max_retries);
+        let policy = RetryPolicy::default_for_profile(ClientProfile::Download);
         let part_path = file_path.to_path_buf();
 
         handles.push(tokio::spawn(async move {
             let expected_len = end - start + 1;
+            // PR-K A: fetch_range 直接返 HttpFailureKind 让 with_retry 按
+            //   is_retryable 决策——4xx 永久错（403/404/410 等 CDN 链接过期 / 鉴权
+            //   失效）立即 propagate 不浪费 retry budget，避免"卡 90% 一个 chunk
+            //   反复重试 N 次"用户感知。short read 仍归 Network 视作瞬态。
             let result: Result<Vec<u8>, HttpFailureKind> = with_retry(&policy, || async {
-                match fetch_range(&client, &url, start, end).await {
-                    Ok(data) if (data.len() as u64) == expected_len => Ok(data),
-                    Ok(data) => {
-                        warn!(
-                            "Range chunk short read: expected {} bytes [{}..{}], got {}",
-                            expected_len,
-                            start,
-                            end,
-                            data.len()
-                        );
-                        Err(HttpFailureKind::Network(format!(
-                            "short read [{}..{}]: expected {} got {}",
-                            start,
-                            end,
-                            expected_len,
-                            data.len()
-                        )))
-                    }
-                    Err(e) => Err(HttpFailureKind::Network(e.to_string())),
+                let data = fetch_range(&client, &url, start, end).await?;
+                if (data.len() as u64) == expected_len {
+                    Ok(data)
+                } else {
+                    warn!(
+                        "Range chunk short read: expected {} bytes [{}..{}], got {}",
+                        expected_len,
+                        start,
+                        end,
+                        data.len()
+                    );
+                    Err(HttpFailureKind::Network(format!(
+                        "short read [{}..{}]: expected {} got {}",
+                        start,
+                        end,
+                        expected_len,
+                        data.len()
+                    )))
                 }
             })
             .await;
@@ -268,27 +281,38 @@ async fn download_remaining_and_pwrite(
     Ok(())
 }
 
+/// PR-K A: 返 `HttpFailureKind` 让上游 with_retry 按 is_retryable 直接决策。
+/// - 200/206：成功路径，返 Vec<u8>
+/// - 4xx 永久错（403/404/410 等 CDN 链接过期 / 鉴权失效）：Permanent4xx 不重试
+/// - 5xx：Server5xx 重试
+/// - 401 + body / 网易云 -301：AuthExpired 不重试
+/// - 网络层错（is_timeout / is_body / is_decode）：Network/Timeout 重试
 async fn fetch_range(
     client: &Client,
     url: &str,
     start: u64,
     end: u64,
-) -> Result<Vec<u8>, AppError> {
+) -> Result<Vec<u8>, HttpFailureKind> {
     let resp = client
         .get(url)
         .header("Range", format!("bytes={}-{}", start, end))
         .send()
         .await
-        .map_err(|e| AppError::Download(format!("Range request failed: {}", e)))?;
+        .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
-    if resp.status().as_u16() == 503 {
-        return Err(AppError::Download("Server returned 503".into()));
-    }
-
-    let data = resp
+    let status = resp.status();
+    let body_bytes = resp
         .bytes()
         .await
-        .map_err(|e| AppError::Download(format!("Read range bytes failed: {}", e)))?;
+        .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
-    Ok(data.to_vec())
+    // 成功路径：206 (Range OK) 或 200 (服务端可能不支持 Range 退化全量)
+    if status == reqwest::StatusCode::PARTIAL_CONTENT || status == reqwest::StatusCode::OK {
+        return Ok(body_bytes.to_vec());
+    }
+
+    // 失败路径：按 status 分类，让 is_retryable 决策（4xx 永久错不再被当 short read 重试）
+    let peek = &body_bytes[..body_bytes.len().min(200)];
+    Err(HttpFailureKind::from_response(status, peek)
+        .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {} (range)", status))))
 }

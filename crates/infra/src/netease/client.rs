@@ -4,12 +4,15 @@
 // PR-E: 整段迁移到 `crate::http::with_retry` + `HttpFailureKind`，删除内部
 //   独立 RETRY_DELAYS_MS / MAX_RETRIES。HttpFailureKind 现自动覆盖
 //   is_body / is_decode / is_request 等 pre-PR-E 漏的网络错；401 自动识别为
-//   AuthExpired 不重试。HTTP 200 + 网易云风控 code (-460/-461/-301) 仍由
-//   上游 api.rs::get_song_url 解析（body code 不在 HTTP 层捕获）。
+//   AuthExpired 不重试。
+//
+// PR-K E1: HTTP 200 路径也 peek body 检测网易云风控码（-460/-461/-301）。
+//   `request_with_retry` 返值改 `Result<String, AppError>` —— body 在内部读完，
+//   200 路径主动 peek 触发 with_retry；调用方拿 String 直接 serde 不再 `.text()`。
 
 use std::collections::HashMap;
 
-use reqwest::{Client, RequestBuilder, Response};
+use reqwest::{Client, RequestBuilder};
 
 use super::types::{default_cookies, REFERER, USER_AGENT};
 use netease_kernel::error::AppError;
@@ -52,6 +55,10 @@ impl HttpClient {
         req
     }
 
+    /// PR-K E1: 返 `String`（已读完 body）。
+    /// - 200/206 路径：peek 头 200 字节 → 网易云 -460/-461/-301 命中即 Err 触发 retry
+    /// - 非 200 路径：现有 `from_response` 分类
+    /// - body utf8 解析失败 → 当瞬态 Network 错（极罕见，可能编码异常或截断响应）
     pub async fn request_with_retry(
         client: &Client,
         method: reqwest::Method,
@@ -59,7 +66,7 @@ impl HttpClient {
         form_data: Option<Vec<(String, String)>>,
         headers: Option<HashMap<String, String>>,
         cookies: Option<&HashMap<String, String>>,
-    ) -> Result<Response, AppError> {
+    ) -> Result<String, AppError> {
         let policy = RetryPolicy::default_for_profile(ClientProfile::Parse);
         let result = with_retry(&policy, || async {
             let resp = Self::build_request(
@@ -75,16 +82,21 @@ impl HttpClient {
             .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
             let status = resp.status();
-            if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
-                return Ok(resp);
-            }
-            // 失败路径：peek body 让 HttpFailureKind 识别 401+deactivated 等。
-            // body 限 200 字节防 OOM。
-            let body = resp
+            let body_bytes = resp
                 .bytes()
                 .await
                 .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
-            let peek = &body[..body.len().min(200)];
+            let peek = &body_bytes[..body_bytes.len().min(200)];
+
+            if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                // PR-K E1：200 路径主动 peek 网易云风控 body code
+                if let Some(kind) = HttpFailureKind::from_response_body_200(peek) {
+                    return Err(kind);
+                }
+                return String::from_utf8(body_bytes.to_vec())
+                    .map_err(|e| HttpFailureKind::Network(format!("body utf8 invalid: {}", e)));
+            }
+            // 失败路径：from_response 分类
             Err(HttpFailureKind::from_response(status, peek)
                 .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {}", status))))
         })
@@ -109,7 +121,7 @@ impl HttpClient {
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
         let form = vec![("params".to_string(), params.to_string())];
-        let resp = Self::request_with_retry(
+        Self::request_with_retry(
             client,
             reqwest::Method::POST,
             url,
@@ -117,10 +129,7 @@ impl HttpClient {
             Some(headers),
             Some(cookies),
         )
-        .await?;
-        resp.text()
-            .await
-            .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))
+        .await
     }
 
     pub async fn post_form(
@@ -132,7 +141,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
-        let resp = Self::request_with_retry(
+        let text = Self::request_with_retry(
             client,
             reqwest::Method::POST,
             url,
@@ -141,10 +150,6 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))?;
         serde_json::from_str(&text).map_err(|e| {
             AppError::Api(format!(
                 "Failed to parse JSON: {} body={}",
@@ -162,7 +167,7 @@ impl HttpClient {
         let mut headers = HashMap::new();
         headers.insert("User-Agent".into(), USER_AGENT.into());
         headers.insert("Referer".into(), REFERER.into());
-        let resp = Self::request_with_retry(
+        let text = Self::request_with_retry(
             client,
             reqwest::Method::GET,
             url,
@@ -171,10 +176,6 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| AppError::Api(format!("Failed to read response: {}", e)))?;
         serde_json::from_str(&text)
             .map_err(|e| AppError::Api(format!("Failed to parse JSON: {}", e)))
     }
