@@ -15,82 +15,68 @@ unsafe_code = "forbid"
 unused_must_use = "deny"
 
 [workspace.lints.clippy]
-# managed-by: migrate-lints v0.1（部分 PR-J cleanup TODO 调到 allow）
+# managed-by: migrate-lints v0.1
 nursery = { level = "allow", priority = -1 }
-
-# === 生产安全底线（保留 warn）===
-# 这些 lint 触发即真问题（调试遗留 / 占位符 / 内存泄漏 / 显式禁的方法等）
+assertions_on_constants = "warn"
+bool_to_int_with_if = "warn"
+cast_lossless = "warn"
+clone_on_ref_ptr = "allow"  # PR-L cleanup TODO: ~20 处 Arc::clone(&x) vs x.clone()
 dbg_macro = "warn"
+default_trait_access = "warn"
 disallowed_methods = "warn"
+enum_variant_names = "warn"
+expect_used = "allow"  # PR-J: ~7 处 builder pattern + static-config（如 Client::builder().build().expect("static config valid")）
+fn_params_excessive_bools = "warn"
+format_in_format_args = "warn"
+if_then_some_else_none = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+iter_overeager_cloned = "warn"
+large_enum_variant = "warn"
+let_underscore_must_use = "allow"  # PR-J: ~32 处 let _ = std::fs::remove_file(&path) fire-and-forget cleanup
+manual_assert = "warn"
+manual_inspect = "warn"
+manual_let_else = "allow"  # PR-L cleanup TODO: ~20 处 match → let-else rewrite
+manual_map = "warn"
+manual_ok_err = "warn"
+manual_string_new = "warn"
+manual_strip = "warn"
+manual_unwrap_or = "warn"
+map_err_ignore = "allow"  # PR-L cleanup TODO: ~8 处 |_| 弃错改 |_e: T| 显式 named
+map_unwrap_or = "warn"
 mem_forget = "warn"
+missing_const_for_fn = "warn"
+needless_for_each = "warn"
+needless_match = "warn"
+needless_pass_by_value = "warn"
+option_if_let_else = "allow"  # PR-L cleanup TODO: ~5 处 if let/else → map_or_else（可读性争议）
+option_option = "warn"
+or_fun_call = "allow"  # PR-L cleanup TODO: ~5 处 or() → or_else()（lazy 求值）
 panic = "warn"
 print_stderr = "warn"
 print_stdout = "warn"
+question_mark = "warn"
+redundant_clone = "warn"
+redundant_closure_for_method_calls = "warn"
+redundant_pattern_matching = "warn"
+result_large_err = "warn"
+semicolon_if_nothing_returned = "warn"
+single_char_pattern = "warn"
+single_match_else = "warn"
+string_lit_as_bytes = "warn"
+struct_excessive_bools = "warn"
 todo = "warn"
 unimplemented = "warn"
-
-# === unwrap/expect/let-underscore（PR-J cleanup TODO）===
-# 现状：~12 处 expect/unwrap 在 builder pattern + static-config（如
-# `Client::builder().build().expect("static config valid")`）+ ~20 处
-# `let _ = std::fs::remove_file(&path)` fire-and-forget cleanup。两者均有
-# 注释 reason 或语义上等价于 panic-on-bug。dist 后续 PR 用 helper 抽
-# (`lock_or_poisoned` / `static_ok_client`) 集中一处 #[allow]。
-expect_used = "allow"
-unwrap_used = "allow"
-let_underscore_must_use = "allow"
-
-# === 纯风格 lint（暂 allow，PR-J cleanup TODO）===
-# migrate-lints v0.1 sync 一次性引入 ~50 处预存代码的 mechanical 改动需求，
-# 单独 cleanup PR 处理。dist gate 不阻断。把下方 = "allow" 改回 = "warn"
-# 重跑 cargo clippy 即可恢复严格模式。
-assertions_on_constants = "allow"
-bool_to_int_with_if = "allow"
-cast_lossless = "allow"
-clone_on_ref_ptr = "allow"
-default_trait_access = "allow"
-fn_params_excessive_bools = "allow"
-format_in_format_args = "allow"
-if_then_some_else_none = "allow"
-implicit_clone = "allow"
-inefficient_to_string = "allow"
-iter_overeager_cloned = "allow"
-large_enum_variant = "allow"
-manual_assert = "allow"
-manual_inspect = "allow"
-manual_let_else = "allow"
-manual_map = "allow"
-manual_ok_err = "allow"
-manual_string_new = "allow"
-manual_strip = "allow"
-manual_unwrap_or = "allow"
-map_err_ignore = "allow"
-map_unwrap_or = "allow"
-missing_const_for_fn = "allow"
-needless_for_each = "allow"
-needless_match = "allow"
-needless_pass_by_value = "allow"
-option_if_let_else = "allow"
-option_option = "allow"
-or_fun_call = "allow"
-question_mark = "allow"
-redundant_clone = "allow"
-redundant_closure_for_method_calls = "allow"
-redundant_pattern_matching = "allow"
-result_large_err = "allow"
-semicolon_if_nothing_returned = "allow"
-single_char_pattern = "allow"
-single_match_else = "allow"
-string_lit_as_bytes = "allow"
-struct_excessive_bools = "allow"
-uninlined_format_args = "allow"
-unnecessary_lazy_evaluations = "allow"
-unnested_or_patterns = "allow"
-unreadable_literal = "allow"
-unused_async = "allow"
-unused_self = "allow"
-useless_conversion = "allow"
-wildcard_enum_match_arm = "allow"
-wildcard_imports = "allow"
+uninlined_format_args = "warn"
+unnecessary_lazy_evaluations = "warn"
+unnested_or_patterns = "warn"
+unreadable_literal = "allow"  # PR-L cleanup TODO: ~11 处 1234567 → 1_234_567
+unused_async = "warn"
+unused_self = "warn"
+unwrap_used = "allow"  # PR-J: tests + builder pattern；生产代码改用 expect("invariant: ...") 或 ?
+useless_conversion = "warn"
+wildcard_enum_match_arm = "allow"  # PR-L cleanup TODO: ~8 处 _ => 改显式枚举 OR 模式
+wildcard_imports = "warn"
 [package]
 name = "netease-music-api"
 version.workspace = true

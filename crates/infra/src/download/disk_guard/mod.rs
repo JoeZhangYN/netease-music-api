@@ -72,7 +72,7 @@ pub fn ensure_disk_space(
     let required = min_free_disk.saturating_add(needed_bytes);
 
     let available = fs2::available_space(downloads_dir)
-        .map_err(|e| AppError::Download(format!("无法查询磁盘空间: {}", e)))?;
+        .map_err(|e| AppError::Download(format!("无法查询磁盘空间: {e}")))?;
 
     if available >= required {
         return Ok(());
@@ -123,7 +123,7 @@ pub fn ensure_disk_space(
     cleanup_empty_dirs(downloads_dir);
 
     let available = fs2::available_space(downloads_dir)
-        .map_err(|e| AppError::Download(format!("无法查询磁盘空间: {}", e)))?;
+        .map_err(|e| AppError::Download(format!("无法查询磁盘空间: {e}")))?;
 
     if available >= required {
         Ok(())

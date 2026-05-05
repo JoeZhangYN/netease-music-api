@@ -84,19 +84,19 @@ pub async fn get_song_info(
     let result = match info_type.as_str() {
         "url" => match song_service::handle_url(api, &music_id, &level, &cookies).await {
             Ok(data) => APIResponse::success(data, "获取歌曲URL成功"),
-            Err(e) => APIResponse::error(&format!("API调用失败: {}", e), 500),
+            Err(e) => APIResponse::error(&format!("API调用失败: {e}"), 500),
         },
         "name" => match song_service::handle_name(api, &music_id).await {
             Ok(data) => APIResponse::success(data, "获取歌曲信息成功"),
-            Err(e) => APIResponse::error(&format!("API调用失败: {}", e), 500),
+            Err(e) => APIResponse::error(&format!("API调用失败: {e}"), 500),
         },
         "lyric" => match song_service::handle_lyric(api, &music_id, &cookies).await {
             Ok(data) => APIResponse::success(data, "获取歌词成功"),
-            Err(e) => APIResponse::error(&format!("API调用失败: {}", e), 500),
+            Err(e) => APIResponse::error(&format!("API调用失败: {e}"), 500),
         },
         "json" => match song_service::handle_json(api, &music_id, &level, &cookies).await {
             Ok(data) => APIResponse::success(data, "获取歌曲信息成功"),
-            Err(e) => APIResponse::error(&format!("API调用失败: {}", e), 500),
+            Err(e) => APIResponse::error(&format!("API调用失败: {e}"), 500),
         },
         _ => APIResponse::error("无效的类型参数", 400),
     };

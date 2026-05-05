@@ -7,11 +7,11 @@ use netease_kernel::util::filename::sanitize_filename;
 pub struct DownloadUrl(String);
 
 impl DownloadUrl {
-    pub fn new(url: String) -> Self {
+    pub const fn new(url: String) -> Self {
         Self(url)
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -78,5 +78,5 @@ pub fn build_file_path(
         &music_info.file_type,
     );
     let quality_dir = downloads_dir.join(quality);
-    quality_dir.join(format!("{}{}", safe_name, ext))
+    quality_dir.join(format!("{safe_name}{ext}"))
 }

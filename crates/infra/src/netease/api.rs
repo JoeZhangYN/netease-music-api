@@ -9,7 +9,10 @@ use serde_json::{json, Value};
 use super::client::HttpClient;
 use super::crypto::encrypt_params;
 use super::pic::get_pic_url;
-use super::types::*;
+use super::types::{
+    default_config, ALBUM_DETAIL_API, LYRIC_API, PLAYLIST_DETAIL_API, SEARCH_API, SONG_DETAIL_V3,
+    SONG_URL_V1,
+};
 use std::str::FromStr;
 
 use netease_domain::model::api_error::ApiError;
@@ -41,7 +44,7 @@ pub struct NeteaseApi {
 }
 
 impl NeteaseApi {
-    pub fn new(client: Client) -> Self {
+    pub const fn new(client: Client) -> Self {
         Self { client }
     }
 }
@@ -60,7 +63,7 @@ impl MusicApi for NeteaseApi {
 
         let song_id_num: i64 = song_id
             .parse()
-            .map_err(|_| AppError::Validation(format!("Invalid song ID: {}", song_id)))?;
+            .map_err(|_| AppError::Validation(format!("Invalid song ID: {song_id}")))?;
 
         let mut payload = serde_json::Map::new();
         payload.insert("ids".into(), json!([song_id_num]));
@@ -82,7 +85,10 @@ impl MusicApi for NeteaseApi {
             .map_err(|e| AppError::from(ApiError::Parse(e.to_string())))?;
 
         // PR-B：风控/auth typed 识别。code != 200 → ApiError 分类
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -107,7 +113,7 @@ impl MusicApi for NeteaseApi {
     async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {
         let song_id_num: i64 = song_id
             .parse()
-            .map_err(|_| AppError::Validation(format!("Invalid song ID: {}", song_id)))?;
+            .map_err(|_| AppError::Validation(format!("Invalid song ID: {song_id}")))?;
 
         let c_data = serde_json::to_string(&json!([{"id": song_id_num, "v": 0}])).unwrap();
         let form = vec![("c".to_string(), c_data)];
@@ -118,7 +124,10 @@ impl MusicApi for NeteaseApi {
         // PR-K E3: typed 错误分类——code != 200 走 classify_netease_code，
         //   让 -460/-461/-301 等风控/auth 错被上游按 typed 决策（重试 / 重新登录 /
         //   降级）而非粗糙归 AppError::Api(String) 丢失类型信息。
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -150,7 +159,10 @@ impl MusicApi for NeteaseApi {
         let result = HttpClient::post_form(&self.client, LYRIC_API, form, cookies).await?;
 
         // PR-K E3: typed 错误分类（同 get_song_detail）
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -177,7 +189,10 @@ impl MusicApi for NeteaseApi {
         let result = HttpClient::post_form(&self.client, SEARCH_API, form, cookies).await?;
 
         // PR-K E3: typed 错误分类
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -195,7 +210,10 @@ impl MusicApi for NeteaseApi {
         let mapped: Vec<Value> = songs
             .into_iter()
             .map(|item| {
-                let id = item.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                let id = item
+                    .get("id")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0);
                 let name = item
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -246,7 +264,10 @@ impl MusicApi for NeteaseApi {
             HttpClient::post_form(&self.client, PLAYLIST_DETAIL_API, form, cookies).await?;
 
         // PR-K E3: typed 错误分类
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -261,7 +282,7 @@ impl MusicApi for NeteaseApi {
             "name": playlist.get("name").and_then(|v| v.as_str()).unwrap_or(""),
             "coverImgUrl": playlist.get("coverImgUrl").and_then(|v| v.as_str()).unwrap_or(""),
             "creator": playlist.pointer("/creator/nickname").and_then(|v| v.as_str()).unwrap_or(""),
-            "trackCount": playlist.get("trackCount").and_then(|v| v.as_i64()).unwrap_or(0),
+            "trackCount": playlist.get("trackCount").and_then(serde_json::Value::as_i64).unwrap_or(0),
             "description": playlist.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             "tracks": [],
         });
@@ -273,7 +294,7 @@ impl MusicApi for NeteaseApi {
                 arr.iter()
                     .filter_map(|t| {
                         t.get("id")
-                            .and_then(|v| v.as_i64())
+                            .and_then(serde_json::Value::as_i64)
                             .map(|id| id.to_string())
                     })
                     .collect()
@@ -308,7 +329,7 @@ impl MusicApi for NeteaseApi {
                         .unwrap_or_default();
 
                     all_tracks.push(json!({
-                        "id": song.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                        "id": song.get("id").and_then(serde_json::Value::as_i64).unwrap_or(0),
                         "name": song.get("name").and_then(|v| v.as_str()).unwrap_or(""),
                         "artists": artists,
                         "album": song.pointer("/al/name").and_then(|v| v.as_str()).unwrap_or(""),
@@ -327,11 +348,14 @@ impl MusicApi for NeteaseApi {
         album_id: &str,
         cookies: &HashMap<String, String>,
     ) -> Result<Value, AppError> {
-        let url = format!("{}{}", ALBUM_DETAIL_API, album_id);
+        let url = format!("{ALBUM_DETAIL_API}{album_id}");
         let result = HttpClient::get_json(&self.client, &url, cookies).await?;
 
         // PR-K E3: typed 错误分类
-        let code = result.get("code").and_then(|v| v.as_i64()).unwrap_or(200);
+        let code = result
+            .get("code")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(200);
         if code != 200 {
             let msg = result
                 .get("message")
@@ -341,7 +365,7 @@ impl MusicApi for NeteaseApi {
         }
 
         let album = result.get("album").cloned().unwrap_or(json!({}));
-        let pic_id = album.get("pic").and_then(|v| v.as_i64());
+        let pic_id = album.get("pic").and_then(serde_json::Value::as_i64);
 
         let mut info = json!({
             "id": album.get("id"),
@@ -369,9 +393,9 @@ impl MusicApi for NeteaseApi {
                                     .join("/")
                             })
                             .unwrap_or_default();
-                        let song_pic_id = song.pointer("/al/pic").and_then(|v| v.as_i64());
+                        let song_pic_id = song.pointer("/al/pic").and_then(serde_json::Value::as_i64);
                         json!({
-                            "id": song.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                            "id": song.get("id").and_then(serde_json::Value::as_i64).unwrap_or(0),
                             "name": song.get("name").and_then(|v| v.as_str()).unwrap_or(""),
                             "artists": artists,
                             "album": song.pointer("/al/name").and_then(|v| v.as_str()).unwrap_or(""),

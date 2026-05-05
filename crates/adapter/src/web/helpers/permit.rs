@@ -42,7 +42,7 @@ impl PermitGuard {
         let permit = tokio::time::timeout(timeout, sem.acquire_owned())
             .await
             .map_err(|_| AppError::ServiceBusy)?
-            .map_err(|_| AppError::Api(format!("semaphore closed: {}", kind)))?;
+            .map_err(|_| AppError::Api(format!("semaphore closed: {kind}")))?;
         stats.increment(kind);
         Ok(Self {
             _permit: permit,

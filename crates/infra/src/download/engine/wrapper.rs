@@ -107,7 +107,7 @@ pub async fn download_music_file(
     }
 
     // PR-3: only treat as cached if size matches expected exactly.
-    let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
         let cover_data = cover_cache.fetch(client, &music_info.pic_url).await;
         return Ok(DownloadResult::ok_with_cover(
@@ -173,7 +173,7 @@ pub async fn download_music_file(
 
     write_music_tags_async(&file_path, &music_info, cover_data.as_deref()).await;
 
-    let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     info!(
         event = %LogEvent::DownloadCompleted,
         song_id = song_id,
@@ -207,7 +207,7 @@ pub async fn download_music_with_metadata(
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
         return Ok(DownloadResult::ok(
             file_path,
@@ -247,6 +247,6 @@ pub async fn download_music_with_metadata(
         write_music_tags_async(&file_path, music_info, cover_data).await;
     }
 
-    let size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     Ok(DownloadResult::ok(file_path, size, music_info.clone()))
 }

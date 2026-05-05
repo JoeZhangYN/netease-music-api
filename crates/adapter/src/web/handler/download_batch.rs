@@ -56,8 +56,7 @@ pub async fn download_batch(
 
     let batch_max = state.runtime_config.load().batch_max_songs;
     if ids.len() > batch_max {
-        return APIResponse::error(&format!("单次批量下载最多{}首", batch_max), 400)
-            .into_response();
+        return APIResponse::error(&format!("单次批量下载最多{batch_max}首"), 400).into_response();
     }
 
     let quality = data
@@ -163,12 +162,12 @@ pub async fn download_batch(
     let zip_path = zip_dir.join(&temp_name);
 
     if let Err(e) = build_zip_to_file(&track_data, &zip_path) {
-        return APIResponse::error(&format!("打包失败: {}", e), 500).into_response();
+        return APIResponse::error(&format!("打包失败: {e}"), 500).into_response();
     }
 
     let file = match tokio::fs::File::open(&zip_path).await {
         Ok(f) => f,
-        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response(),
+        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {e}"), 500).into_response(),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -179,7 +178,7 @@ pub async fn download_batch(
         let _ = tokio::fs::remove_file(&zip_path).await;
     });
 
-    let zip_filename = format!("batch_{}tracks.zip", success_count);
+    let zip_filename = format!("batch_{success_count}tracks.zip");
     let encoded_fn = urlencoding::encode(&zip_filename);
 
     Response::builder()
@@ -187,11 +186,11 @@ pub async fn download_batch(
         .header(header::CONTENT_TYPE, "application/zip")
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename*=UTF-8''{}", encoded_fn),
+            format!("attachment; filename*=UTF-8''{encoded_fn}"),
         )
         .header(
             "X-Download-Message",
-            format!("Batch download: {}/{} succeeded", success_count, total),
+            format!("Batch download: {success_count}/{total} succeeded"),
         )
         .header("X-Download-Filename", encoded_fn.as_ref())
         .header("X-Batch-Total", total.to_string())
@@ -212,13 +211,10 @@ pub async fn download_batch_start(
 
     let batch_max = state.runtime_config.load().batch_max_songs;
     if ids.len() > batch_max {
-        return APIResponse::error(&format!("单次最多{}首", batch_max), 400);
+        return APIResponse::error(&format!("单次最多{batch_max}首"), 400);
     }
 
-    let quality = data
-        .quality
-        .clone()
-        .unwrap_or_else(|| DEFAULT_QUALITY.into());
+    let quality = data.quality.unwrap_or_else(|| DEFAULT_QUALITY.into());
 
     if state.batch_semaphore.available_permits() == 0 {
         return APIResponse::error("已有批量下载任务正在执行，请等待完成后重试", 429);
@@ -271,18 +267,17 @@ async fn batch_download_worker(
     ids: Vec<String>,
     quality: String,
 ) {
-    let _batch_permit = match state.batch_semaphore.try_acquire() {
-        Ok(permit) => permit,
-        Err(_) => {
-            state.task_store.update(
-                &task_id,
-                Box::new(|t| {
-                    t.stage = TaskStage::Error;
-                    t.error = Some("已有批量下载任务正在执行".into());
-                }),
-            );
-            return;
-        }
+    let _batch_permit = if let Ok(permit) = state.batch_semaphore.try_acquire() {
+        permit
+    } else {
+        state.task_store.update(
+            &task_id,
+            Box::new(|t| {
+                t.stage = TaskStage::Error;
+                t.error = Some("已有批量下载任务正在执行".into());
+            }),
+        );
+        return;
     };
 
     let total_tracks = ids.len();
@@ -331,12 +326,13 @@ async fn batch_download_worker(
 
         // --- Resolve music_id: use prefetch_n_plus_1 (for i) or resolve normally ---
         let (music_id, prefetched_info) = if let Some(handle) = prefetch_n_plus_1.take() {
-            match tokio::time::timeout(Duration::from_secs(60), handle).await {
-                Ok(Ok(Some((mid, info)))) => (mid, Some(info)),
-                _ => {
-                    let mid = extract_music_id(raw_id, client).await;
-                    (mid, None)
-                }
+            if let Ok(Ok(Some((mid, info)))) =
+                tokio::time::timeout(Duration::from_secs(60), handle).await
+            {
+                (mid, Some(info))
+            } else {
+                let mid = extract_music_id(raw_id, client).await;
+                (mid, None)
             }
         } else {
             let mid = extract_music_id(raw_id, client).await;
@@ -375,19 +371,15 @@ async fn batch_download_worker(
         let music_info = if let Some(info) = prefetched_info {
             info
         } else {
-            let parse_permit = match tokio::time::timeout(
-                Duration::from_secs(30),
-                state.parse_semaphore.acquire(),
-            )
-            .await
+            let parse_permit = if let Ok(Ok(p)) =
+                tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire()).await
             {
-                Ok(Ok(p)) => p,
-                _ => {
-                    error!("Batch: parse semaphore timeout for {}", music_id);
-                    failed += 1;
-                    progress_base += song_pct;
-                    continue;
-                }
+                p
+            } else {
+                error!("Batch: parse semaphore timeout for {}", music_id);
+                failed += 1;
+                progress_base += song_pct;
+                continue;
             };
             state.stats.increment("parse");
 
@@ -474,21 +466,17 @@ async fn batch_download_worker(
         }
 
         // --- Download phase ---
-        let permit = match tokio::time::timeout(
-            Duration::from_secs(120),
-            state.download_semaphore.acquire(),
-        )
-        .await
+        let permit = if let Ok(Ok(permit)) =
+            tokio::time::timeout(Duration::from_secs(120), state.download_semaphore.acquire()).await
         {
-            Ok(Ok(permit)) => permit,
-            _ => {
-                error!("Batch: download semaphore timeout for {}", music_id);
-                failed += 1;
-                half_triggered.store(true, Ordering::Relaxed);
-                quarter_triggered.store(true, Ordering::Relaxed);
-                progress_base += download_pct;
-                continue;
-            }
+            permit
+        } else {
+            error!("Batch: download semaphore timeout for {}", music_id);
+            failed += 1;
+            half_triggered.store(true, Ordering::Relaxed);
+            quarter_triggered.store(true, Ordering::Relaxed);
+            progress_base += download_pct;
+            continue;
         };
 
         state.stats.increment("download");
@@ -499,7 +487,7 @@ async fn batch_download_worker(
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let cached_size = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
         if cached_size > 0 {
             half_triggered.store(true, Ordering::Relaxed);
             quarter_triggered.store(true, Ordering::Relaxed);
@@ -537,7 +525,7 @@ async fn batch_download_worker(
                 if file_pct >= 50 && !trigger_cb.load(Ordering::Relaxed) {
                     trigger_cb.store(true, Ordering::Relaxed);
                 }
-                let overall_pct = (cb_base + file_pct as f64 / 100.0 * cb_dl_pct) as u32;
+                let overall_pct = (cb_base + f64::from(file_pct) / 100.0 * cb_dl_pct) as u32;
                 let detail = format!(
                     "正在下载 {} - {} ({}%) [{}/{}]",
                     name_cb,
@@ -598,7 +586,7 @@ async fn batch_download_worker(
         let mut cover_data = tokio::time::timeout(Duration::from_secs(30), cover_future)
             .await
             .ok()
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten();
 
         state.stats.decrement("download");
@@ -653,17 +641,17 @@ async fn batch_download_worker(
         Box::new(move |t| {
             t.stage = TaskStage::Packaging;
             t.percent = 90;
-            t.detail = format!("正在打包 {} 首歌曲...", track_len);
+            t.detail = format!("正在打包 {track_len} 首歌曲...");
         }),
     );
 
     let zip_dir = std::env::temp_dir().join("music_api_zips");
     let _ = std::fs::create_dir_all(&zip_dir);
-    let zip_path = zip_dir.join(format!("{}.zip", task_id));
+    let zip_path = zip_dir.join(format!("{task_id}.zip"));
 
     match build_zip_to_file(&track_data, &zip_path) {
         Ok(()) => {
-            let zip_filename = format!("batch_{}tracks.zip", completed);
+            let zip_filename = format!("batch_{completed}tracks.zip");
             let zip_path_str = zip_path.to_string_lossy().to_string();
             let unique_total = total_tracks as u32 - skipped;
             state.task_store.update(
@@ -671,7 +659,7 @@ async fn batch_download_worker(
                 Box::new(move |t| {
                     t.stage = TaskStage::Done;
                     t.percent = 100;
-                    t.detail = format!("下载完成 ({}/{})", completed, unique_total);
+                    t.detail = format!("下载完成 ({completed}/{unique_total})");
                     t.zip_path = Some(zip_path_str);
                     t.zip_filename = Some(zip_filename);
                     t.completed = Some(completed);
@@ -681,7 +669,7 @@ async fn batch_download_worker(
         }
         Err(e) => {
             error!("Failed to build batch ZIP: {}", e);
-            let msg = format!("打包失败: {}", e);
+            let msg = format!("打包失败: {e}");
             state.task_store.update(
                 &task_id,
                 Box::new(move |t| {

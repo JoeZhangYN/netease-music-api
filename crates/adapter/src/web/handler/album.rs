@@ -61,7 +61,7 @@ pub async fn get_album(
             }),
             "获取专辑详情成功",
         ),
-        Err(e) => APIResponse::error(&format!("获取专辑失败: {}", e), 500),
+        Err(e) => APIResponse::error(&format!("获取专辑失败: {e}"), 500),
     };
 
     state.stats.decrement("parse");

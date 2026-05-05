@@ -40,7 +40,7 @@ async fn acquire_timeout_falls_through_with_warn() {
 async fn lru_evicts_oldest_at_capacity() {
     let lim = GovernorLimiter::with_options(10, 20, Duration::from_millis(50), 3);
     for i in 0..3 {
-        lim.acquire(&key("h", &format!("u{}", i))).await.unwrap();
+        lim.acquire(&key("h", &format!("u{i}"))).await.unwrap();
     }
     assert_eq!(lim.user_count(), 3);
     lim.acquire(&key("h", "u3")).await.unwrap();

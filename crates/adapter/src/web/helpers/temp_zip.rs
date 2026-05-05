@@ -26,7 +26,7 @@ pub struct TempZipHandle {
 impl TempZipHandle {
     /// Create a handle for an existing temp ZIP path. The default
     /// 60-second cleanup delay matches the existing handler behavior.
-    pub fn new(path: PathBuf) -> Self {
+    pub const fn new(path: PathBuf) -> Self {
         Self {
             path,
             cleanup_after: DEFAULT_CLEANUP_DELAY,
@@ -34,7 +34,7 @@ impl TempZipHandle {
         }
     }
 
-    pub fn with_cleanup_after(mut self, after: Duration) -> Self {
+    pub const fn with_cleanup_after(mut self, after: Duration) -> Self {
         self.cleanup_after = after;
         self
     }
@@ -42,7 +42,7 @@ impl TempZipHandle {
     /// Disable Drop cleanup. Use when the file's lifetime is owned
     /// elsewhere (e.g. async download path where TaskStore manages
     /// the ZIP via `download/result/{id}` retrieval semantics).
-    pub fn persist(&mut self) {
+    pub const fn persist(&mut self) {
         self.persist = true;
     }
 }

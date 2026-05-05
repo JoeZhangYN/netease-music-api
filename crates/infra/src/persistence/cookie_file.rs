@@ -30,12 +30,12 @@ impl CookieStore for FileCookieStore {
         }
         std::fs::read_to_string(&self.cookie_file)
             .map(|s| s.trim().to_string())
-            .map_err(|e| AppError::Cookie(format!("Failed to read cookie file: {}", e)))
+            .map_err(|e| AppError::Cookie(format!("Failed to read cookie file: {e}")))
     }
 
     fn write(&self, content: &str) -> Result<(), AppError> {
         std::fs::write(&self.cookie_file, content.trim())
-            .map_err(|e| AppError::Cookie(format!("Failed to write cookie file: {}", e)))
+            .map_err(|e| AppError::Cookie(format!("Failed to write cookie file: {e}")))
     }
 
     #[rustfmt::skip]

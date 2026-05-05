@@ -25,10 +25,7 @@ pub fn get_pic_url(pic_id: Option<i64>, size: u32) -> String {
         None | Some(0) => String::new(),
         Some(id) => {
             let enc_id = netease_encrypt_id(&id.to_string());
-            format!(
-                "https://p3.music.126.net/{}/{}.jpg?param={}y{}",
-                enc_id, id, size, size
-            )
+            format!("https://p3.music.126.net/{enc_id}/{id}.jpg?param={size}y{size}")
         }
     }
 }

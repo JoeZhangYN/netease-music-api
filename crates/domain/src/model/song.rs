@@ -21,12 +21,10 @@ impl SongId {
         NonZeroI64::new(v)
             .map(SongId)
             .filter(|id| id.0.get() > 0)
-            .ok_or_else(|| {
-                AppError::Validation(format!("song id must be positive non-zero: {}", v))
-            })
+            .ok_or_else(|| AppError::Validation(format!("song id must be positive non-zero: {v}")))
     }
 
-    pub fn get(self) -> i64 {
+    pub const fn get(self) -> i64 {
         self.0.get()
     }
 }
@@ -42,7 +40,7 @@ impl std::str::FromStr for SongId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let n: i64 = s
             .parse()
-            .map_err(|_| AppError::Validation(format!("song id not a valid integer: {}", s)))?;
+            .map_err(|_| AppError::Validation(format!("song id not a valid integer: {s}")))?;
         Self::try_new(n)
     }
 }
@@ -75,35 +73,40 @@ impl SongUrlData {
             return None;
         }
         Some(Self {
-            id: data.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+            id: data
+                .get("id")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
             url: url.to_string(),
             level: data
                 .get("level")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            size: data.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+            size: data
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
             file_type: data
                 .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("mp3")
                 .to_lowercase(),
-            bitrate: data.get("br").and_then(|v| v.as_i64()),
+            bitrate: data.get("br").and_then(serde_json::Value::as_i64),
         })
     }
 }
 
 pub fn extract_artists(song_data: &Value) -> String {
-    song_data
-        .get("ar")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
+    song_data.get("ar").and_then(|v| v.as_array()).map_or_else(
+        || "未知艺术家".to_string(),
+        |arr| {
             arr.iter()
                 .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
                 .collect::<Vec<_>>()
                 .join("/")
-        })
-        .unwrap_or_else(|| "未知艺术家".to_string())
+        },
+    )
 }
 
 #[cfg(test)]
@@ -159,7 +162,7 @@ mod tests {
     fn song_id_accepts_positive() {
         let id = SongId::try_new(12345).expect("12345 is valid");
         assert_eq!(id.get(), 12345);
-        assert_eq!(format!("{}", id), "12345");
+        assert_eq!(format!("{id}"), "12345");
     }
 
     #[test]

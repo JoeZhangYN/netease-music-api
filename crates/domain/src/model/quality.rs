@@ -50,7 +50,7 @@ impl Quality {
         Quality::Dolby,
     ];
 
-    pub fn wire_str(self) -> &'static str {
+    pub const fn wire_str(self) -> &'static str {
         match self {
             Quality::Standard => "standard",
             Quality::Exhigh => "exhigh",
@@ -63,7 +63,7 @@ impl Quality {
         }
     }
 
-    pub fn display_name_zh(self) -> &'static str {
+    pub const fn display_name_zh(self) -> &'static str {
         match self {
             Quality::Standard => "标准音质",
             Quality::Exhigh => "极高音质",
@@ -152,9 +152,7 @@ pub const VALID_TYPES: &[&str] = &["url", "name", "lyric", "json"];
 /// Compat shim: legacy string-based display name lookup.
 /// Routes through `Quality::FromStr` then `display_name_zh`.
 pub fn quality_display_name(quality: &str) -> &'static str {
-    Quality::from_str(quality)
-        .map(|q| q.display_name_zh())
-        .unwrap_or("未知音质")
+    Quality::from_str(quality).map_or("未知音质", Quality::display_name_zh)
 }
 
 #[cfg(test)]
@@ -244,7 +242,7 @@ mod tests {
     fn invalid_quality_error_displays_input() {
         let err = Quality::from_str("foo").unwrap_err();
         assert_eq!(err.0, "foo");
-        assert!(format!("{}", err).contains("foo"));
+        assert!(format!("{err}").contains("foo"));
     }
 
     // ===== PR-B Quality::ladder =====
@@ -281,7 +279,7 @@ mod tests {
             Quality::Dolby,
         ] {
             let v: Vec<Quality> = Quality::ladder(premium, Quality::Standard).collect();
-            assert_eq!(v, vec![premium], "premium {:?} 不应降级", premium);
+            assert_eq!(v, vec![premium], "premium {premium:?} 不应降级");
         }
     }
 

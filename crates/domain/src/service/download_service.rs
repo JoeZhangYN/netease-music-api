@@ -35,7 +35,7 @@ pub async fn get_music_info(
     let detail_result = detail_result?;
     let song_detail = detail_result
         .pointer("/songs/0")
-        .ok_or_else(|| AppError::Download(format!("No detail for ID {}", music_id)))?;
+        .ok_or_else(|| AppError::Download(format!("No detail for ID {music_id}")))?;
 
     let lyric_result = lyric_result.ok();
     let artists = extract_artists(song_detail);
@@ -58,8 +58,15 @@ pub async fn get_music_info(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        duration: song_detail.get("dt").and_then(|v| v.as_i64()).unwrap_or(0) / 1000,
-        track_number: song_detail.get("no").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        duration: song_detail
+            .get("dt")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0)
+            / 1000,
+        track_number: song_detail
+            .get("no")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0) as i32,
         download_url: DownloadUrl::new(url_data.url),
         file_type: url_data.file_type,
         file_size: url_data.size,

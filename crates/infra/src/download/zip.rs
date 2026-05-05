@@ -21,17 +21,17 @@ fn now_zip_datetime() -> DateTime {
 }
 
 fn dedup_name(base: &str, ext: &str, used: &mut HashSet<String>) -> String {
-    let name = format!("{}{}", base, ext);
+    let name = format!("{base}{ext}");
     if used.insert(name.clone()) {
         return name;
     }
     for i in 2..=999 {
-        let name = format!("{} ({}){}", base, i, ext);
+        let name = format!("{base} ({i}){ext}");
         if used.insert(name.clone()) {
             return name;
         }
     }
-    format!("{} (dup){}", base, ext)
+    format!("{base} (dup){ext}")
 }
 
 fn add_track_to_zip<W: Write + std::io::Seek>(
@@ -52,7 +52,7 @@ fn add_track_to_zip<W: Write + std::io::Seek>(
     let ext = file_path
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| format!(".{}", e))
+        .map(|e| format!(".{e}"))
         .unwrap_or_default();
 
     let file_name = dedup_name(base_name, &ext, used_names);

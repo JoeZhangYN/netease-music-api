@@ -46,19 +46,18 @@ impl From<DownloadError> for AppError {
     fn from(e: DownloadError) -> Self {
         match e {
             DownloadError::Cancelled => AppError::Cancelled,
-            DownloadError::Timeout { secs } => AppError::Timeout(format!("{}s", secs)),
+            DownloadError::Timeout { secs } => AppError::Timeout(format!("{secs}s")),
             DownloadError::DiskFull { need, have } => {
-                AppError::DiskFull(format!("need {} bytes, have {}", need, have))
+                AppError::DiskFull(format!("need {need} bytes, have {have}"))
             }
             DownloadError::UrlExpired { status } => {
-                AppError::Download(format!("URL expired (HTTP {})", status))
+                AppError::Download(format!("URL expired (HTTP {status})"))
             }
             DownloadError::ChunkShortRead { expected, actual } => AppError::Download(format!(
-                "chunk short read: expected {} got {}",
-                expected, actual
+                "chunk short read: expected {expected} got {actual}"
             )),
-            DownloadError::Network(s) => AppError::Download(format!("network: {}", s)),
-            DownloadError::Io(s) => AppError::Download(format!("io: {}", s)),
+            DownloadError::Network(s) => AppError::Download(format!("network: {s}")),
+            DownloadError::Io(s) => AppError::Download(format!("io: {s}")),
             DownloadError::Other(s) => AppError::Download(s),
         }
     }
@@ -75,7 +74,7 @@ pub struct DownloadResult {
 }
 
 impl DownloadResult {
-    pub fn ok(path: PathBuf, size: u64, info: MusicInfo) -> Self {
+    pub const fn ok(path: PathBuf, size: u64, info: MusicInfo) -> Self {
         Self {
             success: true,
             file_path: Some(path),
@@ -86,7 +85,7 @@ impl DownloadResult {
         }
     }
 
-    pub fn ok_with_cover(
+    pub const fn ok_with_cover(
         path: PathBuf,
         size: u64,
         info: MusicInfo,
@@ -127,7 +126,7 @@ pub enum TaskStage {
 }
 
 impl TaskStage {
-    pub fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Done | Self::Error | Self::Retrieved)
     }
 
@@ -135,7 +134,7 @@ impl TaskStage {
     ///
     /// 语义：**非已失败 + 非已取走** → 任务正在工作中或刚完成等待取走，
     /// 复用避免重复下载。`Done` **包括**（用户还没取走，可继续等）。
-    pub fn is_reusable_for_dedup(&self) -> bool {
+    pub const fn is_reusable_for_dedup(&self) -> bool {
         !matches!(self, Self::Error | Self::Retrieved)
     }
 
@@ -143,7 +142,7 @@ impl TaskStage {
     ///
     /// 语义：**已下载完成（含已取过一次）**。`Done` 第一次取走会 transition 到
     /// `Retrieved`，此后仍允许取（重复下载链接），但前端 UI 会显示"已取走"。
-    pub fn is_downloadable_to_user(&self) -> bool {
+    pub const fn is_downloadable_to_user(&self) -> bool {
         matches!(self, Self::Done | Self::Retrieved)
     }
 }

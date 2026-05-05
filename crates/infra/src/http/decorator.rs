@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn extract_user_key_anon_when_music_u_empty() {
         let mut c = HashMap::new();
-        c.insert("MUSIC_U".into(), "".into());
+        c.insert("MUSIC_U".into(), String::new());
         assert_eq!(extract_user_key(&c), "anon");
     }
 

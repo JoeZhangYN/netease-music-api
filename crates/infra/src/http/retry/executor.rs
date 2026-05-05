@@ -1,3 +1,4 @@
+// file-size-gate: exempt PR-K2 jitter + apply_jitter 200 次采样测累积 165 SLOC；with_retry helper + jitter + tests 单一职责高内聚，拆 tests 需 path attr 反加复杂度
 //! `with_retry` helper：消费 `RetryPolicy` + `HttpFailureKind` 决策。
 
 use std::future::Future;
@@ -52,16 +53,15 @@ where
                 }
                 // 服务端 Retry-After 优先且不打 jitter（铁律 §10：尊重服务端建议原值）；
                 // fallback 到本地 backoff 表时应用 ±50% jitter 防 thundering herd。
-                let wait = match kind.retry_after() {
-                    Some(server_hint) => server_hint,
-                    None => {
-                        let base = policy
-                            .backoff
-                            .get(attempt)
-                            .copied()
-                            .unwrap_or(Duration::from_millis(500));
-                        apply_jitter(base)
-                    }
+                let wait = if let Some(server_hint) = kind.retry_after() {
+                    server_hint
+                } else {
+                    let base = policy
+                        .backoff
+                        .get(attempt)
+                        .copied()
+                        .unwrap_or(Duration::from_millis(500));
+                    apply_jitter(base)
                 };
                 warn!(
                     event = %LogEvent::ApiRetry,
@@ -96,8 +96,7 @@ mod tests {
             let ms = jittered.as_millis() as u64;
             assert!(
                 (50..=150).contains(&ms),
-                "jittered duration {}ms out of [50,150] band for base 100ms",
-                ms
+                "jittered duration {ms}ms out of [50,150] band for base 100ms"
             );
         }
     }

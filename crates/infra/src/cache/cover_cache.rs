@@ -64,7 +64,7 @@ impl CoverCache {
             let status = resp.status();
             if !status.is_success() {
                 return Err(HttpFailureKind::from_response(status, b"")
-                    .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {}", status))));
+                    .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status}"))));
             }
             resp.bytes()
                 .await

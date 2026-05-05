@@ -9,7 +9,7 @@ const AES_KEY: &[u8; 16] = b"e82ckenh8dichen8";
 type Aes128EcbEnc = ecb::Encryptor<Aes128>;
 
 fn hex_digest(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect()
+    data.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn md5_hex(text: &str) -> String {
@@ -26,14 +26,8 @@ pub fn encrypt_params(url_str: &str, payload: &Value) -> String {
     let url_path = parsed.path().replace("/eapi/", "/api/");
 
     let json_payload = serde_json::to_string(payload).unwrap_or_default();
-    let digest = md5_hex(&format!(
-        "nobody{}use{}md5forencrypt",
-        url_path, json_payload
-    ));
-    let params = format!(
-        "{}-36cd479b6b5-{}-36cd479b6b5-{}",
-        url_path, json_payload, digest
-    );
+    let digest = md5_hex(&format!("nobody{url_path}use{json_payload}md5forencrypt"));
+    let params = format!("{url_path}-36cd479b6b5-{json_payload}-36cd479b6b5-{digest}");
 
     let params_bytes = params.as_bytes();
     let padded_len = ((params_bytes.len() / 16) + 1) * 16;

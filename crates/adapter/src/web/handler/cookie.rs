@@ -37,7 +37,7 @@ pub async fn set_cookie(
             };
             APIResponse::success(json!({"cookie_status": status}), msg)
         }
-        Err(e) => APIResponse::error(&format!("保存 Cookie 失败: {}", e), 500),
+        Err(e) => APIResponse::error(&format!("保存 Cookie 失败: {e}"), 500),
     }
 }
 

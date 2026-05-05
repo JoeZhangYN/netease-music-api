@@ -34,16 +34,15 @@ fn validate_session(
         return Err(APIResponse::error("未提供管理令牌", 401));
     }
 
-    match token::validate_token(token_str, &state.admin_secret) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            warn!(
-                event = %LogEvent::AdminTokenRejected,
-                token_len = token_str.len(),
-                "admin token validation failed"
-            );
-            Err(APIResponse::error("无效或已过期的管理令牌", 401))
-        }
+    if let Ok(()) = token::validate_token(token_str, &state.admin_secret) {
+        Ok(())
+    } else {
+        warn!(
+            event = %LogEvent::AdminTokenRejected,
+            token_len = token_str.len(),
+            "admin token validation failed"
+        );
+        Err(APIResponse::error("无效或已过期的管理令牌", 401))
     }
 }
 
@@ -81,7 +80,7 @@ pub async fn admin_setup(
 
     let hash = match password::hash_password(&data.password) {
         Ok(h) => h,
-        Err(e) => return APIResponse::error(&format!("密码设置失败: {}", e), 500),
+        Err(e) => return APIResponse::error(&format!("密码设置失败: {e}"), 500),
     };
 
     let _ = password::save_password_hash(&state.config.admin_hash_file, &hash);

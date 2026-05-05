@@ -45,7 +45,7 @@ impl HttpClient {
         }
         let cookie_str: String = merged
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join("; ");
         req = req.header("Cookie", cookie_str);
@@ -94,11 +94,11 @@ impl HttpClient {
                     return Err(kind);
                 }
                 return String::from_utf8(body_bytes.to_vec())
-                    .map_err(|e| HttpFailureKind::Network(format!("body utf8 invalid: {}", e)));
+                    .map_err(|e| HttpFailureKind::Network(format!("body utf8 invalid: {e}")));
             }
             // 失败路径：from_response 分类
             Err(HttpFailureKind::from_response(status, peek)
-                .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {}", status))))
+                .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status}"))))
         })
         .await;
 
@@ -107,7 +107,7 @@ impl HttpClient {
             HttpFailureKind::Quota { retry_after } => {
                 AppError::RateLimited(retry_after.map(|d| d.as_secs()))
             }
-            other => AppError::Api(format!("HTTP request failed: {}", other)),
+            other => AppError::Api(format!("HTTP request failed: {other}")),
         })
     }
 
@@ -176,7 +176,6 @@ impl HttpClient {
             Some(cookies),
         )
         .await?;
-        serde_json::from_str(&text)
-            .map_err(|e| AppError::Api(format!("Failed to parse JSON: {}", e)))
+        serde_json::from_str(&text).map_err(|e| AppError::Api(format!("Failed to parse JSON: {e}")))
     }
 }

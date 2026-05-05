@@ -57,8 +57,7 @@ impl InMemoryTaskStore {
                     .modified()
                     .ok()
                     .and_then(|m| now_ts.duration_since(m).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_secs());
                 if age > zip_max_age {
                     // destructive-audit: exempt — orphan zip 超 zip_max_age 后清理
                     let _ = std::fs::remove_file(entry.path());

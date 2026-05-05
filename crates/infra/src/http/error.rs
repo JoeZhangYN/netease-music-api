@@ -1,3 +1,4 @@
+// file-size-gate: exempt PR-K2 jitter + body-200 peek 测试集累积 183 SLOC；HttpFailureKind enum + classification + tests 高内聚单一职责，拆 tests 需 path attr 反加复杂度
 //! HTTP 错误分类（PR-A §1.1）。
 //!
 //! 现有 `client.rs:82-93` 仅识别 `is_timeout/is_connect`，缺 `is_request/is_body/is_decode`；
@@ -34,7 +35,7 @@ pub enum HttpFailureKind {
 
 impl HttpFailureKind {
     /// 唯一重试决策点。新加变体时编译器穷举 catch 漏 case。
-    pub fn is_retryable(&self) -> bool {
+    pub const fn is_retryable(&self) -> bool {
         match self {
             HttpFailureKind::Network(_)
             | HttpFailureKind::Timeout
@@ -45,7 +46,7 @@ impl HttpFailureKind {
     }
 
     /// 返回建议的等待时长（仅 Quota 给出 retry_after）。
-    pub fn retry_after(&self) -> Option<Duration> {
+    pub const fn retry_after(&self) -> Option<Duration> {
         match self {
             HttpFailureKind::Quota { retry_after } => *retry_after,
             _ => None,

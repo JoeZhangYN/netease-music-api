@@ -20,14 +20,14 @@ pub enum ClientProfile {
 }
 
 impl ClientProfile {
-    pub fn connect_timeout(self) -> Duration {
+    pub const fn connect_timeout(self) -> Duration {
         match self {
             ClientProfile::Parse => Duration::from_secs(5),
             ClientProfile::Download => Duration::from_secs(10),
         }
     }
 
-    pub fn read_timeout(self) -> Duration {
+    pub const fn read_timeout(self) -> Duration {
         match self {
             ClientProfile::Parse => Duration::from_secs(10),
             ClientProfile::Download => Duration::from_secs(60),

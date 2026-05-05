@@ -41,7 +41,7 @@ impl RetryPolicy {
         }
     }
 
-    fn baseline_retries(profile: ClientProfile) -> usize {
+    const fn baseline_retries(profile: ClientProfile) -> usize {
         match profile {
             ClientProfile::Parse => 2,    // 3 attempts (1 + 2 retries)
             ClientProfile::Download => 4, // 5 attempts (1 + 4 retries)
@@ -69,7 +69,7 @@ impl RetryPolicy {
         }
     }
 
-    pub fn max_attempts(&self) -> usize {
+    pub const fn max_attempts(&self) -> usize {
         self.backoff.len() + 1
     }
 }
@@ -159,8 +159,7 @@ mod tests {
             let default = RetryPolicy::default_for_profile(profile);
             assert_eq!(
                 zero.backoff, default.backoff,
-                "for_profile_max_retries_zero must match default_for_profile for {:?}",
-                profile
+                "for_profile_max_retries_zero must match default_for_profile for {profile:?}"
             );
         }
     }

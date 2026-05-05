@@ -56,7 +56,7 @@ impl DownloadConfig {
     ///
     /// SOT 收敛：handler 层 5+ 处的字段-by-字段构造模板（pre-PR-13 反模式）
     /// 全部统一到此函数。加新字段时只改这里 + struct 定义两处，无遗漏。
-    pub fn from_runtime_config(rc: &RuntimeConfig) -> Self {
+    pub const fn from_runtime_config(rc: &RuntimeConfig) -> Self {
         Self {
             ranged_threshold: rc.ranged_threshold,
             ranged_threads: rc.ranged_threads,
@@ -79,7 +79,7 @@ pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 pub fn part_path_for(file_path: &Path) -> PathBuf {
     let mut name = file_path
         .file_name()
-        .map(|n| n.to_os_string())
+        .map(std::ffi::OsStr::to_os_string)
         .unwrap_or_default();
     name.push(".part");
     file_path.with_file_name(name)

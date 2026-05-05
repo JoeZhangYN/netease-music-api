@@ -66,7 +66,7 @@ pub async fn get_playlist(
             }),
             "获取歌单详情成功",
         ),
-        Err(e) => APIResponse::error(&format!("获取歌单失败: {}", e), 500),
+        Err(e) => APIResponse::error(&format!("获取歌单失败: {e}"), 500),
     };
 
     state.stats.decrement("parse");

@@ -60,7 +60,7 @@ async fn download_stream_once(
         .get(url)
         .send()
         .await
-        .map_err(|e| AppError::Download(format!("Download request failed: {}", e)))?;
+        .map_err(|e| AppError::Download(format!("Download request failed: {e}")))?;
 
     // PR-5: reqwest does NOT error on HTTP 4xx/5xx — guard explicitly.
     let status = resp.status();
@@ -111,16 +111,16 @@ async fn stream_resp_to_file_inner(
 
     let mut file = tokio::fs::File::create(file_path)
         .await
-        .map_err(|e| AppError::Download(format!("Create file failed: {}", e)))?;
+        .map_err(|e| AppError::Download(format!("Create file failed: {e}")))?;
 
     let mut downloaded: u64 = 0;
     let mut stream = resp.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Download(format!("Stream error: {}", e)))?;
+        let chunk = chunk.map_err(|e| AppError::Download(format!("Stream error: {e}")))?;
         file.write_all(&chunk)
             .await
-            .map_err(|e| AppError::Download(format!("Write error: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("Write error: {e}")))?;
         downloaded += chunk.len() as u64;
         if let Some(ref cb) = on_progress {
             if total > 0 {
@@ -131,13 +131,12 @@ async fn stream_resp_to_file_inner(
 
     file.flush()
         .await
-        .map_err(|e| AppError::Download(format!("Flush error: {}", e)))?;
+        .map_err(|e| AppError::Download(format!("Flush error: {e}")))?;
 
     // PR-3: short-read detection.
     if total > 0 && downloaded != total {
         return Err(AppError::Download(format!(
-            "Stream short read{}: got {} of {} bytes",
-            short_read_label, downloaded, total
+            "Stream short read{short_read_label}: got {downloaded} of {total} bytes"
         )));
     }
 

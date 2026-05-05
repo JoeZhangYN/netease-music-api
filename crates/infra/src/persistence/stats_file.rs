@@ -65,7 +65,10 @@ impl FileStatsStore {
                         return d;
                     }
                 } else {
-                    data.parse.total = v.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+                    data.parse.total = v
+                        .get("total")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
                 }
                 return data;
             }
@@ -135,18 +138,15 @@ impl StatsStore for FileStatsStore {
     }
 
     fn decrement(&self, kind: &str) {
-        match kind {
-            "parse" => {
-                let prev = self.parse_current.fetch_sub(1, Ordering::Relaxed);
-                if prev <= 0 {
-                    self.parse_current.store(0, Ordering::Relaxed);
-                }
+        if kind == "parse" {
+            let prev = self.parse_current.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 0 {
+                self.parse_current.store(0, Ordering::Relaxed);
             }
-            _ => {
-                let prev = self.download_current.fetch_sub(1, Ordering::Relaxed);
-                if prev <= 0 {
-                    self.download_current.store(0, Ordering::Relaxed);
-                }
+        } else {
+            let prev = self.download_current.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 0 {
+                self.download_current.store(0, Ordering::Relaxed);
             }
         }
         self.notify_sse();

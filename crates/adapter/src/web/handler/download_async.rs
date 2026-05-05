@@ -52,7 +52,7 @@ pub async fn download_start(
         .clone()
         .unwrap_or_else(|| DEFAULT_QUALITY.into());
     let music_id = extract_music_id(&raw_id, &state.http_client).await;
-    let dedup_key = format!("{}_{}", music_id, quality);
+    let dedup_key = format!("{music_id}_{quality}");
 
     if let Some(existing) = state.dedup.get(&dedup_key) {
         let existing_task_id = existing.value().clone();
@@ -66,34 +66,30 @@ pub async fn download_start(
         }
     }
 
-    let metadata = if data.name.is_some() && data.artists.is_some() {
-        Some(MusicInfo {
-            id: music_id.parse().unwrap_or(0),
-            name: data.name.unwrap_or_default(),
-            artists: data.artists.unwrap_or_default(),
-            album: data.album.unwrap_or_default(),
-            pic_url: data.pic_url.unwrap_or_default(),
-            duration: 0,
-            track_number: 0,
-            download_url: DownloadUrl::new(String::new()),
-            file_type: String::new(),
-            file_size: 0,
-            quality: quality.clone(),
-            lyric: data.lyric.unwrap_or_default(),
-            tlyric: data.tlyric.unwrap_or_default(),
-        })
-    } else {
-        None
-    };
+    let metadata = (data.name.is_some() && data.artists.is_some()).then(|| MusicInfo {
+        id: music_id.parse().unwrap_or(0),
+        name: data.name.unwrap_or_default(),
+        artists: data.artists.unwrap_or_default(),
+        album: data.album.unwrap_or_default(),
+        pic_url: data.pic_url.unwrap_or_default(),
+        duration: 0,
+        track_number: 0,
+        download_url: DownloadUrl::new(String::new()),
+        file_type: String::new(),
+        file_size: 0,
+        quality: quality.clone(),
+        lyric: data.lyric.unwrap_or_default(),
+        tlyric: data.tlyric.unwrap_or_default(),
+    });
 
     let task_id = state.task_store.create();
     state.dedup.insert(dedup_key.clone(), task_id.clone());
 
     let state_clone = Arc::clone(&state);
     let task_id_clone = task_id.clone();
-    let music_id_clone = music_id.clone();
+    let music_id_clone = music_id;
     let quality_clone = quality.clone();
-    let dedup_key_clone = dedup_key.clone();
+    let dedup_key_clone = dedup_key;
     tokio::spawn(async move {
         single_download_worker(
             state_clone,
@@ -217,7 +213,7 @@ pub async fn download_result(
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename*=UTF-8''{}", encoded_fn),
+            format!("attachment; filename*=UTF-8''{encoded_fn}"),
         )
         .header("X-Download-Filename", encoded_fn.as_ref())
         .header(header::CONTENT_LENGTH, file_size.to_string())
@@ -234,33 +230,32 @@ async fn single_download_worker(
     metadata: Option<MusicInfo>,
     dedup_key: Option<String>,
 ) {
-    let permit = match tokio::time::timeout(
+    let permit = if let Ok(Ok(permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         state.download_semaphore.acquire(),
     )
     .await
     {
-        Ok(Ok(permit)) => permit,
-        _ => {
-            state.task_store.update(
-                &task_id,
-                Box::new(|t| {
-                    t.stage = TaskStage::Error;
-                    t.error = Some("下载队列繁忙，请稍后重试".into());
-                }),
-            );
-            if let Some(ref key) = dedup_key {
-                state.dedup.remove(key);
-            }
-            return;
+        permit
+    } else {
+        state.task_store.update(
+            &task_id,
+            Box::new(|t| {
+                t.stage = TaskStage::Error;
+                t.error = Some("下载队列繁忙，请稍后重试".into());
+            }),
+        );
+        if let Some(ref key) = dedup_key {
+            state.dedup.remove(key);
         }
+        return;
     };
 
     state.stats.increment("download");
 
     if let Err(e) = do_single_download(&state, &task_id, &music_id, &quality, metadata).await {
         error!("Background download error: {}", e);
-        let msg = e.to_string();
+        let msg = e;
         state.task_store.update(
             &task_id,
             Box::new(move |t| {
@@ -342,7 +337,7 @@ async fn do_single_download(
             .parse_semaphore
             .acquire()
             .await
-            .map_err(|e| format!("parse semaphore closed: {}", e))?;
+            .map_err(|e| format!("parse semaphore closed: {e}"))?;
         state.stats.increment("parse");
 
         let info_result = download_service::get_music_info(
@@ -393,7 +388,7 @@ async fn do_single_download(
         if total > 0 {
             let pct = 5 + (downloaded as f64 / total as f64 * 85.0) as u32;
             let file_pct = (downloaded as f64 / total as f64 * 100.0) as u32;
-            let detail = format!("正在下载音乐文件 ({}%)...", file_pct);
+            let detail = format!("正在下载音乐文件 ({file_pct}%)...");
             task_store.update(
                 &task_id_owned,
                 Box::new(move |t| {
@@ -434,8 +429,7 @@ async fn do_single_download(
         Ok(Err(e)) => return Err(e.to_string()),
         Err(_) => {
             let msg = format!(
-                "下载超时（{}秒）。已下载部分保留为 .part，重试将复用。",
-                dl_timeout_secs
+                "下载超时（{dl_timeout_secs}秒）。已下载部分保留为 .part，重试将复用。"
             );
             state.task_store.update(
                 task_id,
@@ -480,7 +474,7 @@ async fn do_single_download(
 
     let zip_dir = std::env::temp_dir().join("music_api_zips");
     let _ = std::fs::create_dir_all(&zip_dir);
-    let zip_path = zip_dir.join(format!("{}.zip", task_id));
+    let zip_path = zip_dir.join(format!("{task_id}.zip"));
 
     let tracks = vec![TrackData {
         file_path: file_path.clone(),

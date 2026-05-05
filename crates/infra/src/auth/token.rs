@@ -39,7 +39,7 @@ pub fn issue_token(secret: &[u8]) -> String {
     let expiry_b64 = URL_SAFE_NO_PAD.encode(expiry_bytes);
     let sig_b64 = URL_SAFE_NO_PAD.encode(sig);
 
-    format!("{}.{}", expiry_b64, sig_b64)
+    format!("{expiry_b64}.{sig_b64}")
 }
 
 pub fn validate_token(token: &str, secret: &[u8]) -> Result<(), &'static str> {
@@ -100,7 +100,7 @@ mod tests {
     fn test_tampered_token() {
         let secret = vec![42u8; 32];
         let token = issue_token(&secret);
-        let tampered = format!("{}x", token);
+        let tampered = format!("{token}x");
         assert!(validate_token(&tampered, &secret).is_err());
     }
 

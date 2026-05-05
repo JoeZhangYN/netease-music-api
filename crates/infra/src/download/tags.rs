@@ -18,7 +18,7 @@ pub async fn write_music_tags_async(
 ) {
     let file_path = file_path.to_path_buf();
     let music_info = music_info.clone();
-    let cover_data: Option<Vec<u8>> = cover_data.map(|d| d.to_vec());
+    let cover_data: Option<Vec<u8>> = cover_data.map(<[u8]>::to_vec);
     let _ = tokio::task::spawn_blocking(move || {
         write_music_tags(&file_path, &music_info, cover_data.as_deref());
     })
@@ -102,7 +102,7 @@ pub fn verify_tags(file_path: &Path) -> bool {
         Ok(tagged) => tagged
             .primary_tag()
             .or_else(|| tagged.first_tag())
-            .and_then(|t| t.title())
+            .and_then(lofty::tag::Accessor::title)
             .is_some(),
         Err(_) => false,
     }

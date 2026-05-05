@@ -68,7 +68,7 @@ pub async fn download_with_metadata(
         Err(e) => {
             state.stats.decrement("parse");
             drop(parse_permit);
-            return APIResponse::error(&format!("API调用失败: {}", e), 500).into_response();
+            return APIResponse::error(&format!("API调用失败: {e}"), 500).into_response();
         }
     };
 
@@ -115,7 +115,7 @@ pub async fn download_with_metadata(
 
     let result = match dl_result {
         Ok(r) => r,
-        Err(e) => return APIResponse::error(&format!("下载失败: {}", e), 500).into_response(),
+        Err(e) => return APIResponse::error(&format!("下载失败: {e}"), 500).into_response(),
     };
 
     if !result.success {
@@ -137,12 +137,12 @@ pub async fn download_with_metadata(
     let zip_path = zip_dir.join(&temp_name);
 
     if let Err(e) = build_zip_to_file(&tracks, &zip_path) {
-        return APIResponse::error(&format!("文件打包失败: {}", e), 500).into_response();
+        return APIResponse::error(&format!("文件打包失败: {e}"), 500).into_response();
     }
 
     let file = match tokio::fs::File::open(&zip_path).await {
         Ok(f) => f,
-        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {}", e), 500).into_response(),
+        Err(e) => return APIResponse::error(&format!("读取ZIP失败: {e}"), 500).into_response(),
     };
     let stream = tokio_util::io::ReaderStream::new(file);
     let body = Body::from_stream(stream);
@@ -157,7 +157,7 @@ pub async fn download_with_metadata(
         .file_stem()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
-    let zip_filename = format!("{}.zip", base_name);
+    let zip_filename = format!("{base_name}.zip");
     let encoded_fn = urlencoding::encode(&zip_filename);
 
     Response::builder()
@@ -165,7 +165,7 @@ pub async fn download_with_metadata(
         .header(header::CONTENT_TYPE, "application/zip")
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename*=UTF-8''{}", encoded_fn),
+            format!("attachment; filename*=UTF-8''{encoded_fn}"),
         )
         .header("X-Download-Message", "Download completed successfully")
         .header("X-Download-Filename", encoded_fn.as_ref())

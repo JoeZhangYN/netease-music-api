@@ -51,7 +51,7 @@ pub(super) async fn download_adaptive(
         with_retry(&probe_policy, || async {
             let resp = client
                 .get(url)
-                .header("Range", format!("bytes=0-{}", first_end))
+                .header("Range", format!("bytes=0-{first_end}"))
                 .send()
                 .await
                 .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
@@ -78,8 +78,7 @@ pub(super) async fn download_adaptive(
         Err(kind) if !kind.is_retryable() => {
             // 永久错（4xx / AuthExpired）不 fallback：上层应让用户重新 fetch URL 或换 quality
             return Err(AppError::Download(format!(
-                "Range probe permanent error: {}",
-                kind
+                "Range probe permanent error: {kind}"
             )));
         }
         Err(_) => {
@@ -103,7 +102,7 @@ pub(super) async fn download_adaptive(
         let first_data = resp
             .bytes()
             .await
-            .map_err(|e| AppError::Download(format!("Read first chunk: {}", e)))?
+            .map_err(|e| AppError::Download(format!("Read first chunk: {e}")))?
             .to_vec();
 
         if let Some(ref cb) = on_progress {
@@ -152,10 +151,10 @@ async fn download_remaining_and_pwrite(
             .truncate(true)
             .open(file_path)
             .await
-            .map_err(|e| AppError::Download(format!("Create .part failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("Create .part failed: {e}")))?;
         f.set_len(content_length)
             .await
-            .map_err(|e| AppError::Download(format!("set_len .part failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("set_len .part failed: {e}")))?;
     }
 
     // 写第一 chunk（已 fetch）到 offset 0
@@ -164,16 +163,16 @@ async fn download_remaining_and_pwrite(
             .write(true)
             .open(file_path)
             .await
-            .map_err(|e| AppError::Download(format!("Open .part for first write: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("Open .part for first write: {e}")))?;
         f.seek(SeekFrom::Start(0))
             .await
-            .map_err(|e| AppError::Download(format!("seek 0 failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("seek 0 failed: {e}")))?;
         f.write_all(&first_data)
             .await
-            .map_err(|e| AppError::Download(format!("Write first chunk failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("Write first chunk failed: {e}")))?;
         f.flush()
             .await
-            .map_err(|e| AppError::Download(format!("flush first chunk failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("flush first chunk failed: {e}")))?;
     }
 
     let downloaded_total =
@@ -239,19 +238,18 @@ async fn download_remaining_and_pwrite(
                         .await
                         .map_err(|e| {
                             AppError::Download(format!(
-                                "Open .part for chunk [{}..{}]: {}",
-                                start, end, e
+                                "Open .part for chunk [{start}..{end}]: {e}"
                             ))
                         })?;
                     f.seek(SeekFrom::Start(start))
                         .await
-                        .map_err(|e| AppError::Download(format!("seek {} failed: {}", start, e)))?;
-                    f.write_all(&data).await.map_err(|e| {
-                        AppError::Download(format!("pwrite [{}..{}]: {}", start, end, e))
-                    })?;
-                    f.flush().await.map_err(|e| {
-                        AppError::Download(format!("flush [{}..{}]: {}", start, end, e))
-                    })?;
+                        .map_err(|e| AppError::Download(format!("seek {start} failed: {e}")))?;
+                    f.write_all(&data)
+                        .await
+                        .map_err(|e| AppError::Download(format!("pwrite [{start}..{end}]: {e}")))?;
+                    f.flush()
+                        .await
+                        .map_err(|e| AppError::Download(format!("flush [{start}..{end}]: {e}")))?;
                     drop(data); // 显式释放 Vec
 
                     downloaded_total.fetch_add(actual_len, std::sync::atomic::Ordering::Relaxed);
@@ -264,8 +262,7 @@ async fn download_remaining_and_pwrite(
                     Ok(())
                 }
                 Err(kind) => Err(AppError::Download(format!(
-                    "Range chunk [{}..{}] failed: {}",
-                    start, end, kind
+                    "Range chunk [{start}..{end}] failed: {kind}"
                 ))),
             }
         }));
@@ -274,12 +271,12 @@ async fn download_remaining_and_pwrite(
     for handle in handles {
         handle
             .await
-            .map_err(|e| AppError::Download(format!("Task join error: {}", e)))?
-            .map_err(|e| AppError::Download(format!("Range download failed: {}", e)))?;
+            .map_err(|e| AppError::Download(format!("Task join error: {e}")))?
+            .map_err(|e| AppError::Download(format!("Range download failed: {e}")))?;
     }
 
     // PR-3: post-assembly size verification still holds
-    let written = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    let written = std::fs::metadata(file_path).map_or(0, |m| m.len());
     if written != content_length {
         return Err(AppError::Download(format!(
             "Assembled file size mismatch: wrote {} bytes, expected {} ({})",
@@ -306,7 +303,7 @@ async fn fetch_range(
 ) -> Result<Vec<u8>, HttpFailureKind> {
     let resp = client
         .get(url)
-        .header("Range", format!("bytes={}-{}", start, end))
+        .header("Range", format!("bytes={start}-{end}"))
         .send()
         .await
         .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
@@ -325,5 +322,5 @@ async fn fetch_range(
     // 失败路径：按 status 分类，让 is_retryable 决策（4xx 永久错不再被当 short read 重试）
     let peek = &body_bytes[..body_bytes.len().min(200)];
     Err(HttpFailureKind::from_response(status, peek)
-        .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {} (range)", status))))
+        .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status} (range)"))))
 }

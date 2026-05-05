@@ -97,18 +97,17 @@ impl RateLimiter for GovernorLimiter {
         let limiter = self.get_or_insert(key);
         self.touch(key);
 
-        match tokio::time::timeout(self.acquire_timeout, limiter.until_ready()).await {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                warn!(
-                    event = %LogEvent::RateLimited,
-                    host = %key.host,
-                    user = %key.user,
-                    timeout_ms = self.acquire_timeout.as_millis() as u64,
-                    "rate limit acquire timeout — falling through to avoid blocking user",
-                );
-                Ok(())
-            }
+        if let Ok(()) = tokio::time::timeout(self.acquire_timeout, limiter.until_ready()).await {
+            Ok(())
+        } else {
+            warn!(
+                event = %LogEvent::RateLimited,
+                host = %key.host,
+                user = %key.user,
+                timeout_ms = self.acquire_timeout.as_millis() as u64,
+                "rate limit acquire timeout — falling through to avoid blocking user",
+            );
+            Ok(())
         }
     }
 }
