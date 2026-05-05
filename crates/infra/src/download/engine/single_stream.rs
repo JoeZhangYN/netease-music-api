@@ -14,7 +14,7 @@ use netease_kernel::error::AppError;
 
 use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 
-use super::ProgressCallback;
+use super::{DownloadConfig, ProgressCallback};
 
 /// AppError → HttpFailureKind 映射。`Cancelled` 不重试，其它视为可重试瞬态。
 fn classify(e: AppError) -> HttpFailureKind {
@@ -26,16 +26,19 @@ fn classify(e: AppError) -> HttpFailureKind {
     }
 }
 
-// PR-K B: max_retries 参数已删除。RetryPolicy 构造统一走 RetryPolicy::default_for_profile
-// (SOT 单源 in policy.rs::for_profile_with_max_retries)。
+// PR-K2: 接 `&DownloadConfig` 让 `RetryPolicy` 真消费 config.max_retries（admin
+// 面板 max_retries=1 应急止血 / =15 高 CDN 抖动场景实时生效）。RetryPolicy 构造
+// 统一走 SOT 单源 `RetryPolicy::for_profile_with_max_retries` (policy.rs)。
 pub(super) async fn download_single_stream(
     client: &Client,
     url: &str,
     file_path: &Path,
     content_length: u64,
     on_progress: Option<ProgressCallback>,
+    config: &DownloadConfig,
 ) -> Result<(), AppError> {
-    let policy = RetryPolicy::default_for_profile(ClientProfile::Download);
+    let policy =
+        RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
 
     with_retry(&policy, || async {
         download_stream_once(client, url, file_path, content_length, &on_progress)
@@ -139,4 +142,41 @@ async fn stream_resp_to_file_inner(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // PR-K2: 验证 download_single_stream 的 RetryPolicy 真消费 config.max_retries
+    // （而非走 default_for_profile 忽略 config）。admin 面板 max_retries=1 应实时
+    // 生效为 2 attempts (1 + 1 retry)。CLAUDE.md 不变量 #21 行为契约。
+    #[test]
+    fn download_single_stream_uses_config_max_retries() {
+        let config = DownloadConfig {
+            max_retries: 1,
+            ..DownloadConfig::default()
+        };
+        let policy =
+            RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
+        assert_eq!(
+            policy.max_attempts(),
+            2,
+            "DownloadConfig max_retries=1 must yield 2 attempts (1 + 1 retry)"
+        );
+
+        let config_large = DownloadConfig {
+            max_retries: 15,
+            ..DownloadConfig::default()
+        };
+        let policy_large = RetryPolicy::for_profile_with_max_retries(
+            config_large.max_retries,
+            ClientProfile::Download,
+        );
+        assert_eq!(
+            policy_large.max_attempts(),
+            5,
+            "DownloadConfig max_retries=15 must clamp to Download baseline = 5 attempts"
+        );
+    }
 }

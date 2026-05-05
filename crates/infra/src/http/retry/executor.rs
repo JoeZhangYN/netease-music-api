@@ -86,6 +86,22 @@ mod tests {
 
     use super::*;
 
+    // PR-K2: jitter sanity — `apply_jitter` 总在 [0.5x, 1.5x] 区间，无论
+    // 多少次采样。验证 thundering herd 防护不退化为常数 0 / 不溢出 ±50%。
+    #[test]
+    fn jitter_does_not_break_existing_retries() {
+        let base = Duration::from_millis(100);
+        for _ in 0..200 {
+            let jittered = apply_jitter(base);
+            let ms = jittered.as_millis() as u64;
+            assert!(
+                (50..=150).contains(&ms),
+                "jittered duration {}ms out of [50,150] band for base 100ms",
+                ms
+            );
+        }
+    }
+
     #[tokio::test]
     async fn returns_first_ok() {
         let policy = RetryPolicy::fixed(&[1, 1, 1]);

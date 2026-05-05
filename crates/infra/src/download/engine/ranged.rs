@@ -21,9 +21,9 @@ use crate::http::{with_retry, ClientProfile, HttpFailureKind, RetryPolicy};
 use super::single_stream::{download_single_stream, stream_response_to_file};
 use super::{DownloadConfig, ProgressCallback};
 
-// PR-K B: build_policy 已删除——RetryPolicy 构造统一走 RetryPolicy::default_for_profile
-// (SOT 单源 in policy.rs::for_profile_with_max_retries)。max_retries 当前未实时传播
-// （留给后续 PR），先用 default_for_profile(Download) 与 single_stream 对齐。
+// PR-K2: probe + chunk fetch 的 RetryPolicy 构造统一走 SOT 单源
+// `RetryPolicy::for_profile_with_max_retries(config.max_retries, Download)`，
+// admin 面板 max_retries 修改实时生效（应急止血 / 高 CDN 抖动场景缓冲）。
 
 /// For large files: first Range GET doubles as probe and first chunk download.
 /// If 206 → Range supported, download remaining chunks in parallel.
@@ -45,7 +45,8 @@ pub(super) async fn download_adaptive(
     let chunk_size = content_length / ranged_threads as u64;
     let first_end = chunk_size - 1;
 
-    let probe_policy = RetryPolicy::default_for_profile(ClientProfile::Download);
+    let probe_policy =
+        RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
     let probe_result: Result<reqwest::Response, HttpFailureKind> =
         with_retry(&probe_policy, || async {
             let resp = client
@@ -84,8 +85,15 @@ pub(super) async fn download_adaptive(
         Err(_) => {
             // retry 全部 attempt 后仍 transient 失败 → fallback 到 single_stream
             // 给 single_stream 一次"换连接路径试试"的机会
-            return download_single_stream(client, url, file_path, content_length, on_progress)
-                .await;
+            return download_single_stream(
+                client,
+                url,
+                file_path,
+                content_length,
+                on_progress,
+                config,
+            )
+            .await;
         }
     };
 
@@ -111,12 +119,13 @@ pub(super) async fn download_adaptive(
             chunk_size,
             ranged_threads,
             on_progress,
+            config,
         )
         .await
     } else if status == 200 || status == 203 {
         stream_response_to_file(resp, file_path, content_length, on_progress).await
     } else {
-        download_single_stream(client, url, file_path, content_length, on_progress).await
+        download_single_stream(client, url, file_path, content_length, on_progress, config).await
     }
 }
 
@@ -133,6 +142,7 @@ async fn download_remaining_and_pwrite(
     chunk_size: u64,
     ranged_threads: usize,
     on_progress: Option<ProgressCallback>,
+    config: &DownloadConfig,
 ) -> Result<(), AppError> {
     // 预分配 .part 文件至 content_length（pwrite 到 offset 需文件已具该长度）
     {
@@ -187,7 +197,8 @@ async fn download_remaining_and_pwrite(
         let downloaded_total = downloaded_total.clone();
         let on_progress = on_progress.clone();
         let cl = content_length;
-        let policy = RetryPolicy::default_for_profile(ClientProfile::Download);
+        let policy =
+            RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
         let part_path = file_path.to_path_buf();
 
         handles.push(tokio::spawn(async move {
