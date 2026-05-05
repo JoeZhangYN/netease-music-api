@@ -27,4 +27,6 @@ devnull
 .claude/Cargo-additions.toml.example
 .claude/refactor/
 .claude/scheduled_tasks.lock
+.claude/.audit-tmp/
+.claude/.state/
 *.bak
