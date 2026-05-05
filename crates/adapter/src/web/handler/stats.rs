@@ -31,18 +31,16 @@ pub async fn parse_stats_stream(
             async move { Ok::<_, Infallible>(Event::default().data(initial_msg)) },
         );
 
-    let broadcast_stream =
-        BroadcastStream::new(rx).filter_map(|result: Result<String, _>| match result {
-            Ok(msg) => {
-                let data = msg
-                    .strip_prefix("data: ")
-                    .and_then(|s: &str| s.strip_suffix("\n\n"))
-                    .unwrap_or(&msg)
-                    .to_string();
-                Some(Ok::<_, Infallible>(Event::default().data(data)))
-            }
-            Err(_) => None,
-        });
+    let broadcast_stream = BroadcastStream::new(rx).filter_map(|result: Result<String, _>| {
+        result.ok().map(|msg| {
+            let data = msg
+                .strip_prefix("data: ")
+                .and_then(|s: &str| s.strip_suffix("\n\n"))
+                .unwrap_or(&msg)
+                .to_string();
+            Ok::<_, Infallible>(Event::default().data(data))
+        })
+    });
 
     let stream = initial_stream.chain(broadcast_stream);
 

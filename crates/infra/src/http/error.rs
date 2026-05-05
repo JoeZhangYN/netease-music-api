@@ -49,7 +49,11 @@ impl HttpFailureKind {
     pub const fn retry_after(&self) -> Option<Duration> {
         match self {
             HttpFailureKind::Quota { retry_after } => *retry_after,
-            _ => None,
+            HttpFailureKind::Network(_)
+            | HttpFailureKind::Timeout
+            | HttpFailureKind::Server5xx { .. }
+            | HttpFailureKind::AuthExpired
+            | HttpFailureKind::Permanent4xx { .. } => None,
         }
     }
 

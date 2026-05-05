@@ -67,6 +67,7 @@ impl From<ApiError> for AppError {
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // tests: `_ => panic!("expected X")` 是常规反例断言风格
 mod tests {
     use super::*;
 

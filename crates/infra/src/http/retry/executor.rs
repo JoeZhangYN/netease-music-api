@@ -53,16 +53,14 @@ where
                 }
                 // 服务端 Retry-After 优先且不打 jitter（铁律 §10：尊重服务端建议原值）；
                 // fallback 到本地 backoff 表时应用 ±50% jitter 防 thundering herd。
-                let wait = if let Some(server_hint) = kind.retry_after() {
-                    server_hint
-                } else {
+                let wait = kind.retry_after().unwrap_or_else(|| {
                     let base = policy
                         .backoff
                         .get(attempt)
                         .copied()
                         .unwrap_or(Duration::from_millis(500));
                     apply_jitter(base)
-                };
+                });
                 warn!(
                     event = %LogEvent::ApiRetry,
                     attempt = attempt + 1,
@@ -76,10 +74,11 @@ where
             }
         }
     }
-    Err(last_err.unwrap_or(HttpFailureKind::Network("retry exhausted".into())))
+    Err(last_err.unwrap_or_else(|| HttpFailureKind::Network("retry exhausted".into())))
 }
 
 #[cfg(test)]
+#[allow(clippy::clone_on_ref_ptr, clippy::unwrap_used)] // tests: Arc::clone 等价改写无收益；unwrap 在 test 内 invariant 假设可 panic
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

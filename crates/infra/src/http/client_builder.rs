@@ -40,6 +40,8 @@ impl ClientProfile {
 /// pool_max_idle_per_host=10 / pool_idle_timeout=90s 在两条链路一致，
 /// 直接散在 builder 内部。
 pub fn make_client(profile: ClientProfile) -> Client {
+    // builder pattern + 全静态参数（无 env-driven proxy/cert）→ build 恒成功
+    #[allow(clippy::expect_used)]
     Client::builder()
         .connect_timeout(profile.connect_timeout())
         .read_timeout(profile.read_timeout())

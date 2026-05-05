@@ -44,14 +44,13 @@ pub async fn download_with_metadata(
     let music_id = extract_music_id(&raw_id, &state.http_client).await;
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let parse_permit = match tokio::time::timeout(
+    let Ok(Ok(parse_permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         state.parse_semaphore.acquire(),
     )
     .await
-    {
-        Ok(Ok(p)) => p,
-        _ => return APIResponse::error("服务繁忙，请稍后重试", 503).into_response(),
+    else {
+        return APIResponse::error("服务繁忙，请稍后重试", 503).into_response();
     };
     state.stats.increment("parse");
 
@@ -123,6 +122,8 @@ pub async fn download_with_metadata(
             .into_response();
     }
 
+    // success=true 路径保证 file_path Some（DownloadResult invariant）
+    #[allow(clippy::unwrap_used)]
     let file_path = result.file_path.as_ref().unwrap();
     write_music_tags_async(file_path, &music_info, cover_data.as_deref()).await;
 

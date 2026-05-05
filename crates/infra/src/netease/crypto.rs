@@ -19,6 +19,10 @@ fn md5_hex(text: &str) -> String {
 }
 
 pub fn encrypt_params(url_str: &str, payload: &Value) -> String {
+    // "http://localhost" 是静态合法 URL；Url::parse 对此恒成功（fallback path）
+    // disallowed_methods 禁了 Result::unwrap_or_else（吞错重灾区）；本处是 URL fallback
+    // 显式降级——非 silent 吞错，故就近 #[allow] 跳过 option_if_let_else 重构建议。
+    #[allow(clippy::expect_used, clippy::option_if_let_else)]
     let parsed = match Url::parse(url_str) {
         Ok(u) => u,
         Err(_) => Url::parse("http://localhost").expect("static fallback URL is valid"),
@@ -35,9 +39,11 @@ pub fn encrypt_params(url_str: &str, payload: &Value) -> String {
     buf[..params_bytes.len()].copy_from_slice(params_bytes);
 
     let enc = Aes128EcbEnc::new(AES_KEY.into());
+    // buf 已 padded 到 16 倍数（line 36），AES-128-ECB 在该 buf 上 encrypt_padded_mut 恒成功
+    #[allow(clippy::expect_used)]
     let encrypted = enc
         .encrypt_padded_mut::<Pkcs7>(&mut buf, params_bytes.len())
-        .expect("encryption failed");
+        .expect("encryption invariant: pre-padded buf len % 16 == 0");
 
     hex_digest(encrypted)
 }

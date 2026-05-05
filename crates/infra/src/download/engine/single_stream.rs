@@ -18,6 +18,9 @@ use super::{DownloadConfig, ProgressCallback};
 
 /// AppError → HttpFailureKind 映射。`Cancelled` 不重试，其它视为可重试瞬态。
 fn classify(e: AppError) -> HttpFailureKind {
+    // 新加 AppError variant 默认归 Network（瞬态可重试）—— catch-all 是 retry 安全降级，
+    // 显式列出全 14 variants 反而让新增 variant 强制每处 retry 站点决策不必要。
+    #[allow(clippy::wildcard_enum_match_arm)]
     match e {
         AppError::Cancelled => HttpFailureKind::Permanent4xx { status: 499 },
         AppError::Timeout(_) => HttpFailureKind::Timeout,

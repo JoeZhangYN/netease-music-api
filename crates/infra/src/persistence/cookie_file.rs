@@ -45,9 +45,8 @@ impl CookieStore for FileCookieStore {
     }
 
     fn is_valid(&self) -> bool {
-        let cookies = match self.parse() {
-            Ok(c) => c,
-            Err(_) => return false,
+        let Ok(cookies) = self.parse() else {
+            return false;
         };
         is_cookies_valid(&cookies)
     }

@@ -33,8 +33,8 @@ pub async fn get_song_info(
     let ids = query
         .ids
         .or(body.ids)
-        .or(query.id.clone())
-        .or(body.id.clone());
+        .or_else(|| query.id.clone())
+        .or_else(|| body.id.clone());
     let url_param = query.url.or(body.url);
     let level = query
         .level
@@ -65,14 +65,13 @@ pub async fn get_song_info(
         );
     }
 
-    let permit = match tokio::time::timeout(
+    let Ok(Ok(permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         state.parse_semaphore.acquire(),
     )
     .await
-    {
-        Ok(Ok(p)) => p,
-        _ => return APIResponse::error("服务繁忙，请稍后重试", 503),
+    else {
+        return APIResponse::error("服务繁忙，请稍后重试", 503);
     };
 
     state.stats.increment("parse");

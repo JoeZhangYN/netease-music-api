@@ -37,8 +37,12 @@ impl GovernorLimiter {
         acquire_timeout: Duration,
         max_users: usize,
     ) -> Self {
-        let rps = NonZeroU32::new(rps_per_user.max(1)).expect("non-zero after max(1)");
-        let burst_nz = NonZeroU32::new(burst.max(rps_per_user.max(1))).expect("non-zero");
+        // .max(1) 后输入 ≥1，NonZeroU32::new 恒成功；下行同理（max() 保证 ≥1）
+        #[allow(clippy::expect_used)]
+        let rps = NonZeroU32::new(rps_per_user.max(1)).expect("max(1) ensures non-zero");
+        #[allow(clippy::expect_used)]
+        let burst_nz =
+            NonZeroU32::new(burst.max(rps_per_user.max(1))).expect("max() ensures non-zero");
         let quota = Quota::per_second(rps).allow_burst(burst_nz);
         Self {
             buckets: DashMap::new(),
@@ -50,7 +54,7 @@ impl GovernorLimiter {
 
     fn get_or_insert(&self, key: &RateLimitKey) -> Arc<DefaultDirectRateLimiter> {
         if let Some(e) = self.buckets.get(key) {
-            return e.limiter.clone();
+            return Arc::clone(&e.limiter);
         }
         if self.buckets.len() >= self.max_users {
             self.evict_oldest();
@@ -59,7 +63,7 @@ impl GovernorLimiter {
         self.buckets.insert(
             key.clone(),
             BucketEntry {
-                limiter: limiter.clone(),
+                limiter: Arc::clone(&limiter),
                 last_access: Instant::now(),
             },
         );

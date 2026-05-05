@@ -58,12 +58,12 @@ impl MusicApi for NeteaseApi {
         cookies: &HashMap<String, String>,
     ) -> Result<SongUrlData, AppError> {
         let mut config = default_config();
-        let request_id = rand::thread_rng().gen_range(20000000u32..30000000);
+        let request_id = rand::thread_rng().gen_range(20_000_000_u32..30_000_000);
         config.insert("requestId".into(), Value::String(request_id.to_string()));
 
-        let song_id_num: i64 = song_id
-            .parse()
-            .map_err(|_| AppError::Validation(format!("Invalid song ID: {song_id}")))?;
+        let song_id_num: i64 = song_id.parse().map_err(|_e: std::num::ParseIntError| {
+            AppError::Validation(format!("Invalid song ID: {song_id}"))
+        })?;
 
         let mut payload = serde_json::Map::new();
         payload.insert("ids".into(), json!([song_id_num]));
@@ -71,6 +71,8 @@ impl MusicApi for NeteaseApi {
         payload.insert("encodeType".into(), json!("flac"));
         payload.insert(
             "header".into(),
+            // default_config() 输出 HashMap<String,String> 必序列化成功（无非 ASCII / 无循环）
+            #[allow(clippy::unwrap_used)]
             Value::String(serde_json::to_string(&config).unwrap()),
         );
 
@@ -101,20 +103,24 @@ impl MusicApi for NeteaseApi {
             .pointer("/data/0")
             .ok_or_else(|| AppError::from(ApiError::Parse("missing /data/0 in response".into())))?;
         // PR-B: from_api_response 返 None = url 为空 → UrlEmpty 让 fallback 决策
-        match SongUrlData::from_api_response(song_data) {
-            Some(d) => Ok(d),
-            None => Err(AppError::from(ApiError::UrlEmpty {
-                quality: Quality::from_str(quality).unwrap_or_default(),
-                song_id: song_id_num,
-            })),
-        }
+        SongUrlData::from_api_response(song_data).map_or_else(
+            || {
+                Err(AppError::from(ApiError::UrlEmpty {
+                    quality: Quality::from_str(quality).unwrap_or_default(),
+                    song_id: song_id_num,
+                }))
+            },
+            Ok,
+        )
     }
 
     async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {
-        let song_id_num: i64 = song_id
-            .parse()
-            .map_err(|_| AppError::Validation(format!("Invalid song ID: {song_id}")))?;
+        let song_id_num: i64 = song_id.parse().map_err(|_e: std::num::ParseIntError| {
+            AppError::Validation(format!("Invalid song ID: {song_id}"))
+        })?;
 
+        // json! macro 输出确定结构，序列化必成功
+        #[allow(clippy::unwrap_used)]
         let c_data = serde_json::to_string(&json!([{"id": song_id_num, "v": 0}])).unwrap();
         let form = vec![("c".to_string(), c_data)];
 
@@ -311,6 +317,8 @@ impl MusicApi for NeteaseApi {
                     json!({"id": id_num, "v": 0})
                 })
                 .collect();
+            // Vec<json!{...}> 确定结构序列化必成功
+            #[allow(clippy::unwrap_used)]
             let form = vec![("c".to_string(), serde_json::to_string(&c_data).unwrap())];
             let song_result =
                 HttpClient::post_form(&self.client, SONG_DETAIL_V3, form, cookies).await?;

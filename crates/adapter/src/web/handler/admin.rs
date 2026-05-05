@@ -47,6 +47,8 @@ fn validate_session(
 }
 
 pub async fn admin_status(State(state): State<Arc<AppState>>) -> (StatusCode, Json<APIResponse>) {
+    // RwLock poisoned 仅在持有者 panic 时发生 = 真 bug；panic 是合理报警
+    #[allow(clippy::unwrap_used)]
     let has_password = state.admin_password_hash.read().unwrap().is_some();
     APIResponse::success(
         json!({
@@ -66,6 +68,7 @@ pub async fn admin_setup(
     State(state): State<Arc<AppState>>,
     Json(data): Json<SetupRequest>,
 ) -> (StatusCode, Json<APIResponse>) {
+    #[allow(clippy::unwrap_used)] // RwLock poisoned 同 admin_status
     let has_password = state.admin_password_hash.read().unwrap().is_some();
     if has_password {
         return APIResponse::error("管理密码已设置，无法重复设置", 403);
@@ -83,8 +86,13 @@ pub async fn admin_setup(
         Err(e) => return APIResponse::error(&format!("密码设置失败: {e}"), 500),
     };
 
-    let _ = password::save_password_hash(&state.config.admin_hash_file, &hash);
-    *state.admin_password_hash.write().unwrap() = Some(hash);
+    // fire-and-forget：磁盘满 / 只读分区时仍把内存态更新（下次重启重做即可）
+    let _: Result<(), netease_kernel::error::AppError> =
+        password::save_password_hash(&state.config.admin_hash_file, &hash);
+    #[allow(clippy::unwrap_used)] // RwLock poisoned 同 admin_status
+    {
+        *state.admin_password_hash.write().unwrap() = Some(hash);
+    }
 
     let t = token::issue_token(&state.admin_secret);
 
@@ -103,10 +111,11 @@ pub async fn admin_login(
     State(state): State<Arc<AppState>>,
     Json(data): Json<LoginRequest>,
 ) -> (StatusCode, Json<APIResponse>) {
+    // RwLock 持有者 panic 才会 poisoned；状态机 invariant
+    #[allow(clippy::unwrap_used)]
     let hash = state.admin_password_hash.read().unwrap().clone();
-    let hash = match hash {
-        Some(h) => h,
-        None => return APIResponse::error("管理密码尚未设置", 400),
+    let Some(hash) = hash else {
+        return APIResponse::error("管理密码尚未设置", 400);
     };
 
     if !password::verify_password(&data.password, &hash) {
@@ -224,7 +233,7 @@ pub async fn admin_get_config_schema(
             { "name": "parse_concurrency",                "min": 1,           "max": 50,          "default": 5,             "unit": null     },
             { "name": "download_concurrency",             "min": 1,           "max": 20,          "default": 2,             "unit": null     },
             { "name": "batch_concurrency",                "min": 1,           "max": 5,           "default": 1,             "unit": null     },
-            { "name": "ranged_threshold",                 "min": 1048576,     "max": null,        "default": 5242880,       "unit": "bytes"  },
+            { "name": "ranged_threshold",                 "min": 1_048_576,     "max": null,        "default": 5_242_880,       "unit": "bytes"  },
             { "name": "ranged_threads",                   "min": 1,           "max": 32,          "default": 8,             "unit": null     },
             { "name": "max_retries",                      "min": 1,           "max": 20,          "default": 5,             "unit": null     },
             { "name": "download_cleanup_interval_secs",   "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
@@ -235,7 +244,7 @@ pub async fn admin_get_config_schema(
             { "name": "cover_cache_ttl_secs",             "min": 60,          "max": null,        "default": 600,           "unit": "secs"   },
             { "name": "cover_cache_max_size",             "min": 1,           "max": 500,         "default": 50,            "unit": null     },
             { "name": "batch_max_songs",                  "min": 1,           "max": 500,         "default": 100,           "unit": null     },
-            { "name": "min_free_disk",                    "min": 104857600,   "max": null,        "default": 524288000,     "unit": "bytes"  },
+            { "name": "min_free_disk",                    "min": 104_857_600,   "max": null,        "default": 524_288_000,     "unit": "bytes"  },
             { "name": "download_timeout_per_song_secs",   "min": 10,          "max": null,        "default": 300,           "unit": "secs"   },
             { "name": "disk_guard_grace_secs",            "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
             { "name": "rate_limit_rps_per_user",          "min": 0,           "max": 1000,        "default": 10,            "unit": "req/s"  },

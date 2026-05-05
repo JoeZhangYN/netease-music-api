@@ -98,12 +98,11 @@ fn write_tags_inner(
 }
 
 pub fn verify_tags(file_path: &Path) -> bool {
-    match lofty::read_from_path(file_path) {
-        Ok(tagged) => tagged
+    lofty::read_from_path(file_path).is_ok_and(|tagged| {
+        tagged
             .primary_tag()
             .or_else(|| tagged.first_tag())
             .and_then(lofty::tag::Accessor::title)
-            .is_some(),
-        Err(_) => false,
-    }
+            .is_some()
+    })
 }

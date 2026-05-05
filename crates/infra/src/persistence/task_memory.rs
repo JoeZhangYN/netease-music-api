@@ -46,9 +46,8 @@ impl InMemoryTaskStore {
     fn cleanup_orphan_zips(&self) {
         let zip_max_age = self.zip_max_age_secs.load(Ordering::Relaxed);
         let zip_dir = std::env::temp_dir().join(ZIP_DIR_NAME);
-        let entries = match std::fs::read_dir(&zip_dir) {
-            Ok(e) => e,
-            Err(_) => return,
+        let Ok(entries) = std::fs::read_dir(&zip_dir) else {
+            return;
         };
         let now_ts = std::time::SystemTime::now();
         for entry in entries.flatten() {

@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_get_pic_url_valid() {
-        let url = get_pic_url(Some(109951167805892883), 300);
+        let url = get_pic_url(Some(109_951_167_805_892_883), 300);
         assert!(url.starts_with("https://p3.music.126.net/"));
         assert!(url.contains("300y300"));
     }

@@ -193,7 +193,7 @@ async fn download_remaining_and_pwrite(
     for (start, end) in ranges {
         let client = client.clone();
         let url = url.to_string();
-        let downloaded_total = downloaded_total.clone();
+        let downloaded_total = std::sync::Arc::clone(&downloaded_total);
         let on_progress = on_progress.clone();
         let cl = content_length;
         let policy =

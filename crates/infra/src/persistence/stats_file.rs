@@ -157,6 +157,8 @@ impl StatsStore for FileStatsStore {
         let month_key = now.format("%Y-%m").to_string();
         let day_key = now.format("%Y-%m-%d").to_string();
 
+        // Mutex poisoned 仅在持有者 panic 时发生 = 真 bug；panic 是合理报警
+        #[allow(clippy::unwrap_used)]
         let data = self.data.lock().unwrap();
 
         let build_bucket = |bucket: &StatsBucket, current: i32| {

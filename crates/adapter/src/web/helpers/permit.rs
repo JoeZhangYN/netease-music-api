@@ -41,8 +41,10 @@ impl PermitGuard {
     ) -> Result<Self, AppError> {
         let permit = tokio::time::timeout(timeout, sem.acquire_owned())
             .await
-            .map_err(|_| AppError::ServiceBusy)?
-            .map_err(|_| AppError::Api(format!("semaphore closed: {kind}")))?;
+            .map_err(|_e: tokio::time::error::Elapsed| AppError::ServiceBusy)?
+            .map_err(|_e: tokio::sync::AcquireError| {
+                AppError::Api(format!("semaphore closed: {kind}"))
+            })?;
         stats.increment(kind);
         Ok(Self {
             _permit: permit,
@@ -59,6 +61,7 @@ impl Drop for PermitGuard {
 }
 
 #[cfg(test)]
+#[allow(clippy::clone_on_ref_ptr, clippy::unwrap_used)] // tests: Arc::clone 等价改写无收益；test invariant 假设可 panic
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicI64, Ordering};

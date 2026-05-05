@@ -26,9 +26,8 @@ fn collect_files_by_age(dir: &Path) -> Vec<FileEntry> {
     let mut stack = vec![dir.to_path_buf()];
 
     while let Some(current) = stack.pop() {
-        let read_dir = match std::fs::read_dir(&current) {
-            Ok(rd) => rd,
-            Err(_) => continue,
+        let Ok(read_dir) = std::fs::read_dir(&current) else {
+            continue;
         };
         for entry in read_dir.flatten() {
             let path = entry.path();
@@ -50,15 +49,15 @@ fn collect_files_by_age(dir: &Path) -> Vec<FileEntry> {
 }
 
 fn cleanup_empty_dirs(dir: &Path) {
-    let read_dir = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return,
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
     };
     for entry in read_dir.flatten() {
         let path = entry.path();
         if path.is_dir() {
             cleanup_empty_dirs(&path);
-            let _ = std::fs::remove_dir(&path);
+            // fire-and-forget：dir 非空时 remove_dir 必失败，下次清理再试
+            let _: std::io::Result<()> = std::fs::remove_dir(&path);
         }
     }
 }

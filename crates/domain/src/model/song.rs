@@ -38,9 +38,9 @@ impl std::fmt::Display for SongId {
 impl std::str::FromStr for SongId {
     type Err = AppError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let n: i64 = s
-            .parse()
-            .map_err(|_| AppError::Validation(format!("song id not a valid integer: {s}")))?;
+        let n: i64 = s.parse().map_err(|_e: std::num::ParseIntError| {
+            AppError::Validation(format!("song id not a valid integer: {s}"))
+        })?;
         Self::try_new(n)
     }
 }
@@ -120,17 +120,17 @@ mod tests {
             "id": 12345,
             "url": "https://m701.music.126.net/x.flac",
             "level": "lossless",
-            "size": 1234567,
+            "size": 1_234_567,
             "type": "FLAC",
-            "br": 999000,
+            "br": 999_000,
         });
         let parsed = SongUrlData::from_api_response(&v).expect("should parse");
         assert_eq!(parsed.id, 12345);
         assert_eq!(parsed.url, "https://m701.music.126.net/x.flac");
         assert_eq!(parsed.level, "lossless");
-        assert_eq!(parsed.size, 1234567);
+        assert_eq!(parsed.size, 1_234_567);
         assert_eq!(parsed.file_type, "flac"); // lowercased
-        assert_eq!(parsed.bitrate, Some(999000));
+        assert_eq!(parsed.bitrate, Some(999_000));
     }
 
     #[test]

@@ -57,25 +57,22 @@ pub async fn download_music(
 
     let music_id = extract_music_id(&music_id, &state.http_client).await;
 
-    let parse_permit = match tokio::time::timeout(
+    let Ok(Ok(parse_permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         state.parse_semaphore.acquire(),
     )
     .await
-    {
-        Ok(Ok(p)) => p,
-        _ => return APIResponse::error("服务繁忙，请稍后重试", 503).into_response(),
+    else {
+        return APIResponse::error("服务繁忙，请稍后重试", 503).into_response();
     };
     state.stats.increment("parse");
 
-    let download_permit = if let Ok(Ok(p)) = tokio::time::timeout(
+    let Ok(Ok(download_permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         state.download_semaphore.acquire(),
     )
     .await
-    {
-        p
-    } else {
+    else {
         state.stats.decrement("parse");
         drop(parse_permit);
         return APIResponse::error("下载队列繁忙，请稍后重试", 503).into_response();
@@ -132,7 +129,10 @@ pub async fn download_music(
             .into_response();
     }
 
+    // download_music_file 成功路径保证两字段 Some（DownloadResult invariant）
+    #[allow(clippy::unwrap_used)]
     let file_path = result.file_path.as_ref().unwrap();
+    #[allow(clippy::unwrap_used)]
     let mi = result.music_info.as_ref().unwrap();
 
     if return_format == "json" {

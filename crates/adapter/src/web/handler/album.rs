@@ -41,14 +41,13 @@ pub async fn get_album(
 
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let parse_permit = match tokio::time::timeout(
+    let Ok(Ok(parse_permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         state.parse_semaphore.acquire(),
     )
     .await
-    {
-        Ok(Ok(p)) => p,
-        _ => return APIResponse::error("服务繁忙，请稍后重试", 503),
+    else {
+        return APIResponse::error("服务繁忙，请稍后重试", 503);
     };
     state.stats.increment("parse");
 

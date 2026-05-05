@@ -124,9 +124,8 @@ pub async fn download_progress(
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
 ) -> Response {
-    let task = match state.task_store.get(&task_id) {
-        Some(t) => t,
-        None => return APIResponse::error("任务不存在或已过期", 404).into_response(),
+    let Some(task) = state.task_store.get(&task_id) else {
+        return APIResponse::error("任务不存在或已过期", 404).into_response();
     };
 
     let now = SystemTime::now()
@@ -148,6 +147,8 @@ pub async fn download_progress(
 
     let (status, json) = APIResponse::success(resp_data, "success");
     let mut response = (status, json).into_response();
+    // "no-store" 是 RFC 7234 静态合法 header value，parse 必成功
+    #[allow(clippy::unwrap_used)]
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
@@ -158,9 +159,8 @@ pub async fn download_result(
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
 ) -> Response {
-    let task = match state.task_store.get(&task_id) {
-        Some(t) => t,
-        None => return APIResponse::error("任务不存在或已过期", 404).into_response(),
+    let Some(task) = state.task_store.get(&task_id) else {
+        return APIResponse::error("任务不存在或已过期", 404).into_response();
     };
 
     if !task.stage.is_downloadable_to_user() {
@@ -189,9 +189,8 @@ pub async fn download_result(
         Err(_) => return APIResponse::error("文件数据丢失", 500).into_response(),
     };
 
-    let file = match tokio::fs::File::open(&zip_path).await {
-        Ok(f) => f,
-        Err(_) => return APIResponse::error("文件数据丢失", 500).into_response(),
+    let Ok(file) = tokio::fs::File::open(&zip_path).await else {
+        return APIResponse::error("文件数据丢失", 500).into_response();
     };
 
     let encoded_fn = urlencoding::encode(&zip_filename);
@@ -230,14 +229,12 @@ async fn single_download_worker(
     metadata: Option<MusicInfo>,
     dedup_key: Option<String>,
 ) {
-    let permit = if let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(Ok(permit)) = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         state.download_semaphore.acquire(),
     )
     .await
-    {
-        permit
-    } else {
+    else {
         state.task_store.update(
             &task_id,
             Box::new(|t| {
@@ -363,7 +360,7 @@ async fn do_single_download(
     let cover_future = {
         let client = client.clone();
         let pic_url = music_info.pic_url.clone();
-        let cache = state.cover_cache.clone();
+        let cache = Arc::clone(&state.cover_cache);
         tokio::spawn(async move {
             if pic_url.is_empty() {
                 None
@@ -383,7 +380,7 @@ async fn do_single_download(
     );
 
     let task_id_owned = task_id.to_string();
-    let task_store = state.task_store.clone();
+    let task_store = Arc::clone(&state.task_store);
     let progress_cb: ProgressCallback = Arc::new(move |downloaded, total| {
         if total > 0 {
             let pct = 5 + (downloaded as f64 / total as f64 * 85.0) as u32;
@@ -469,11 +466,14 @@ async fn do_single_download(
         }),
     );
 
+    // download_music_with_metadata 成功路径保证 file_path Some
+    #[allow(clippy::unwrap_used)]
     let file_path = result.file_path.as_ref().unwrap();
     write_music_tags_async(file_path, &music_info, cover_data.as_deref()).await;
 
     let zip_dir = std::env::temp_dir().join("music_api_zips");
-    let _ = std::fs::create_dir_all(&zip_dir);
+    // fire-and-forget：dir 已存在 / 权限不足时下游 build_zip_to_file 报告
+    let _: std::io::Result<()> = std::fs::create_dir_all(&zip_dir);
     let zip_path = zip_dir.join(format!("{task_id}.zip"));
 
     let tracks = vec![TrackData {

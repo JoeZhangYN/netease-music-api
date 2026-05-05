@@ -107,7 +107,12 @@ impl HttpClient {
             HttpFailureKind::Quota { retry_after } => {
                 AppError::RateLimited(retry_after.map(|d| d.as_secs()))
             }
-            other => AppError::Api(format!("HTTP request failed: {other}")),
+            other @ (HttpFailureKind::Network(_)
+            | HttpFailureKind::Timeout
+            | HttpFailureKind::Server5xx { .. }
+            | HttpFailureKind::Permanent4xx { .. }) => {
+                AppError::Api(format!("HTTP request failed: {other}"))
+            }
         })
     }
 

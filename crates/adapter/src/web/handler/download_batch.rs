@@ -39,7 +39,10 @@ fn extract_ids(ids: &[serde_json::Value]) -> Vec<String> {
         .map(|v| match v {
             serde_json::Value::String(s) => s.trim().to_string(),
             serde_json::Value::Number(n) => n.to_string(),
-            _ => String::new(),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => String::new(),
         })
         .filter(|s| !s.is_empty() && seen.insert(s.clone()))
         .collect()
@@ -141,6 +144,8 @@ pub async fn download_batch(
 
         match dl_result {
             Ok(result) if result.success => {
+                // success=true 路径保证两字段 Some（DownloadResult invariant）
+                #[allow(clippy::unwrap_used)]
                 track_data.push(TrackData {
                     file_path: result.file_path.unwrap(),
                     music_info: result.music_info.unwrap(),
@@ -267,9 +272,7 @@ async fn batch_download_worker(
     ids: Vec<String>,
     quality: String,
 ) {
-    let _batch_permit = if let Ok(permit) = state.batch_semaphore.try_acquire() {
-        permit
-    } else {
+    let Ok(_batch_permit) = state.batch_semaphore.try_acquire() else {
         state.task_store.update(
             &task_id,
             Box::new(|t| {
@@ -371,11 +374,10 @@ async fn batch_download_worker(
         let music_info = if let Some(info) = prefetched_info {
             info
         } else {
-            let parse_permit = if let Ok(Ok(p)) =
-                tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire()).await
-            {
-                p
-            } else {
+            let Ok(Ok(parse_permit)) =
+                tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire())
+                    .await
+            else {
                 error!("Batch: parse semaphore timeout for {}", music_id);
                 failed += 1;
                 progress_base += song_pct;
@@ -430,14 +432,13 @@ async fn batch_download_worker(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 let mid = extract_music_id(&target_raw_id, &state_c.http_client).await;
-                let parse_permit = match tokio::time::timeout(
+                let Ok(Ok(parse_permit)) = tokio::time::timeout(
                     Duration::from_secs(30),
                     state_c.parse_semaphore.acquire(),
                 )
                 .await
-                {
-                    Ok(Ok(p)) => p,
-                    _ => return None,
+                else {
+                    return None;
                 };
                 state_c.stats.increment("parse");
                 let result = download_service::get_music_info(
@@ -456,21 +457,23 @@ async fn batch_download_worker(
         };
 
         if prefetch_n_plus_1.is_none() && i + 1 < ids.len() {
-            prefetch_n_plus_1 = Some(spawn_prefetch(ids[i + 1].clone(), half_triggered.clone()));
+            prefetch_n_plus_1 = Some(spawn_prefetch(
+                ids[i + 1].clone(),
+                Arc::clone(&half_triggered),
+            ));
         }
         if prefetch_n_plus_2.is_none() && i + 2 < ids.len() {
             prefetch_n_plus_2 = Some(spawn_prefetch(
                 ids[i + 2].clone(),
-                quarter_triggered.clone(),
+                Arc::clone(&quarter_triggered),
             ));
         }
 
         // --- Download phase ---
-        let permit = if let Ok(Ok(permit)) =
-            tokio::time::timeout(Duration::from_secs(120), state.download_semaphore.acquire()).await
-        {
-            permit
-        } else {
+        let Ok(Ok(permit)) =
+            tokio::time::timeout(Duration::from_secs(120), state.download_semaphore.acquire())
+                .await
+        else {
             error!("Batch: download semaphore timeout for {}", music_id);
             failed += 1;
             half_triggered.store(true, Ordering::Relaxed);
@@ -484,7 +487,8 @@ async fn batch_download_worker(
         let file_path = build_file_path(&state.config.downloads_dir, &music_info, &quality);
 
         if let Some(parent) = file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            // fire-and-forget：dir 已存在不算错；权限不足时下行 download 报告
+            let _: std::io::Result<()> = std::fs::create_dir_all(parent);
         }
 
         let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
@@ -504,12 +508,12 @@ async fn batch_download_worker(
             continue;
         }
 
-        let task_store = state.task_store.clone();
+        let task_store = Arc::clone(&state.task_store);
         let task_id_for_cb = task_id.clone();
         let name_cb = name.clone();
         let artists_cb = artists.clone();
-        let trigger_cb = half_triggered.clone();
-        let quarter_cb = quarter_triggered.clone();
+        let trigger_cb = Arc::clone(&half_triggered);
+        let quarter_cb = Arc::clone(&quarter_triggered);
         let cb_base = progress_base;
         let cb_dl_pct = download_pct;
         let track_idx = i;
@@ -547,7 +551,7 @@ async fn batch_download_worker(
         let cover_future = {
             let client = client.clone();
             let pic_url = music_info.pic_url.clone();
-            let cache = state.cover_cache.clone();
+            let cache = Arc::clone(&state.cover_cache);
             tokio::spawn(async move { cache.fetch(&client, &pic_url).await })
         };
 
