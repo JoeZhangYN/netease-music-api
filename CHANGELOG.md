@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4] - 2026-05-12
+
+embed-assets fast-follow patch。主服务行为无变化。
+
+### Fixed
+- **embed-assets：already-tagged 音频也收 sidecar 进 `_used/`** — 之前 pipeline 用 `r.{cover,lyrics}_embedded`（本次新写入了）判定是否搬走 sidecar；同 stem 多音频且部分已嵌入过的场景（例如同首歌不同音质后缀 `.mp3` / `.flac` 共享一个 `.lrc`，部分已被嵌入），第二次扫描的 audio 返回 `embedded=false`，导致 `lrc` / `jpg` 留在原地未归集。`EmbedResult` 新增 `cover_present` / `lyrics_present` 字段反映嵌入完成后 tag 的实际状态，pipeline 改用 `present` 判定 move；relocate.rs 同名冲突逻辑（字节一致 → 删源去重 / 不一致 → 加 `-NN` 后缀）已实现保持不动。同时把 `.srt` 也纳入收集（`lyrics_present=true` 即 srt 角色完成），避免下次扫描重复处理。
+
 ## [3.0.3] - 2026-05-12
 
 文档与开发体验维护 release。主服务行为无变化；新增 workspace 周边工具 embed-assets，CI fmt 红线机械防护落地。

@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "embed-assets"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "netease-adapter"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "arc-swap",
  "axum",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "netease-domain"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "async-trait",
  "futures",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "netease-infra"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "aes",
  "async-trait",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "netease-kernel"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -1493,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "netease-music-api"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "arc-swap",
  "axum",
