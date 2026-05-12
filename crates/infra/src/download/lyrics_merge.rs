@@ -90,10 +90,7 @@ mod tests {
         let lyric = "[00:01.00]Hello\n[00:02.00]World\n";
         let tlyric = "[00:01.00]你好\n[00:99.00]孤儿翻译\n";
         let merged = merge_bilingual_lrc(lyric, tlyric);
-        assert_eq!(
-            merged,
-            "[00:01.00]Hello\n[00:01.00]你好\n[00:02.00]World\n"
-        );
+        assert_eq!(merged, "[00:01.00]Hello\n[00:01.00]你好\n[00:02.00]World\n");
     }
 
     #[test]
@@ -110,8 +107,14 @@ mod tests {
 
     #[test]
     fn split_lrc_line_recognizes_timestamps() {
-        assert_eq!(split_lrc_line("[00:12.34]hello"), Some(("00:12.34", "hello")));
-        assert_eq!(split_lrc_line("  [01:23.456]世界"), Some(("01:23.456", "世界")));
+        assert_eq!(
+            split_lrc_line("[00:12.34]hello"),
+            Some(("00:12.34", "hello"))
+        );
+        assert_eq!(
+            split_lrc_line("  [01:23.456]世界"),
+            Some(("01:23.456", "世界"))
+        );
     }
 
     #[test]

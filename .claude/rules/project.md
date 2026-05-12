@@ -83,14 +83,39 @@ docker compose up -d --build        # Docker 部署
 
 ## 修改后检查清单
 
-1. [ ] `cargo build --release` 通过
-2. [ ] `cargo test` 通过
-3. [ ] 新增/修改的路由已在 `router.rs` 注册
-4. [ ] 涉及 API 调用的 handler 已接入 `parse_semaphore` + stats
-5. [ ] 涉及文件下载的 handler 已接入 `download_semaphore`
-6. [ ] 异步任务支持取消 (`state.cancelled` 检查)
-7. [ ] ARCHITECTURE.md 映射表已同步
-8. [ ] `references/` 文档已同步
+> **第 1 / 2 项是 CI 红线（commit 前必跑）**——由 `.claude/scripts/precommit-cargo-fmt-gate.sh`
+> PreToolUse hook 在 `git commit` 时机械拦截 fmt 失败。Clippy / build / test 仍属人工纪律（hook
+> 没拦——`-D warnings` clippy 较慢，本地 commit 阻断不合算；CI 兜底）。
+>
+> **历史反例**（动机 SOT）：
+> - `3a93e04` (2026-04-30) "cargo fmt --all (CI fmt-check 历史遗留 fmt 债)"
+> - `ae7907f` (2026-05-12) `feat(lyrics)` 再次未跑 fmt → ubuntu + windows CI 双红
+> - 两次同因 → **hook 化机械防护**（依赖 AI / 人自觉 = 长期必复发）
+
+1. [ ] **`cargo fmt --all -- --check` 通过**（commit 前；hook 自动拦）
+2. [ ] **`cargo clippy --workspace --all-targets -- -D warnings` 通过**（CI 用此命令）
+3. [ ] `cargo build --release` 通过
+4. [ ] `cargo test --workspace --all-targets` 通过
+5. [ ] 新增/修改的路由已在 `router.rs` 注册
+6. [ ] 涉及 API 调用的 handler 已接入 `parse_semaphore` + stats
+7. [ ] 涉及文件下载的 handler 已接入 `download_semaphore`
+8. [ ] 异步任务支持取消 (`state.cancelled` 检查)
+9. [ ] ARCHITECTURE.md 映射表已同步
+10. [ ] `references/` 文档已同步
+
+### CI fmt gate 旁路（应急）
+
+`cargo fmt --check` hook 失败时，正确顺序：
+
+```bash
+cargo fmt --all       # 应用 fmt 修复
+git add -u
+git commit -m "..."   # hook 二次跑通过
+```
+
+**禁用 `--no-verify` 绕过**——CI 仍会用 `--check` 跑，push 后必红；本地跳过只是把
+失败延后到 CI，反而需要多一次 commit 修复（短路径反模式典型，见
+`~/.claude/disciplines/discipline-workflow-rhythm.md#短路径反模式`）。
 
 ---
 
