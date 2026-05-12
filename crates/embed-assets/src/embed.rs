@@ -9,8 +9,14 @@ use lofty::tag::{ItemKey, Tag, TagType};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EmbedResult {
+    /// 这次实际写入了 cover（之前没有 → 现在有；或 force 覆盖）
     pub cover_embedded: bool,
+    /// 这次实际写入了 lyrics
     pub lyrics_embedded: bool,
+    /// 函数返回时 audio tag 中存在 cover（包含本次嵌入 + 之前已嵌入的 already-tagged 路径）
+    pub cover_present: bool,
+    /// 函数返回时 audio tag 中存在 lyrics（USLT/Lyrics/UnsyncLyrics 任一）
+    pub lyrics_present: bool,
 }
 
 impl EmbedResult {
@@ -103,6 +109,13 @@ pub fn embed(
         tag.save_to_path(audio_path, WriteOptions::default())
             .with_context(|| format!("save tag to {}", audio_path.display()))?;
     }
+
+    // present 反映嵌入完成后内存 tag 的实际状态，包含本次嵌入 + already-tagged 路径。
+    // pipeline 用这两个字段决定是否把 sibling sidecar 收进 _used/——已嵌入的 audio
+    // 即便本次 unchanged，sidecar 也应该收走（dedup 或加 -NN 后缀，relocate.rs 处理）。
+    result.cover_present = !tag.pictures().is_empty();
+    result.lyrics_present = tag.get_string(ItemKey::Lyrics).is_some()
+        || tag.get_string(ItemKey::UnsyncLyrics).is_some();
 
     Ok(result)
 }

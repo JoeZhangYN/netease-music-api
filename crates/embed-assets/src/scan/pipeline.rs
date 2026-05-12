@@ -55,7 +55,7 @@ pub fn process_group(
         return;
     };
 
-    let (any_cover_used, any_lyric_used) = embed_targets(
+    let (any_cover_present, any_lyric_present) = embed_targets(
         audios,
         &targets,
         cover.as_deref(),
@@ -66,15 +66,23 @@ pub fn process_group(
         root,
     );
 
+    // 资产收集条件：用 present（嵌入后 tag 中存在）而非 embedded（这次写入了）——
+    // 同 stem 多音频 + 部分已 already-tagged 场景下，sidecar 也应被收进 _used/。
+    // relocate.rs 处理同名冲突：字节一致则删源去重，不一致加 -NN 后缀。
     if !opts.no_move && !opts.dry_run {
-        if any_cover_used {
+        if any_cover_present {
             if let Some(c) = &cover {
                 move_asset(c, root, "cover", stats);
             }
         }
-        if any_lyric_used {
+        if any_lyric_present {
             if let Some(l) = &lyric {
                 move_asset(l, root, "lrc", stats);
+            }
+            // srt 是 lrc 的 fallback 源；audio tag 已有 lyrics 即说明 srt 角色完成，
+            // 一并收走避免下次扫描重复处理。
+            if let Some(s) = &srt {
+                move_asset(s, root, "srt", stats);
             }
         }
     }
@@ -91,15 +99,15 @@ fn embed_targets(
     stats: &mut Stats,
     root: &Path,
 ) -> (bool, bool) {
-    let mut any_cover = false;
-    let mut any_lyric = false;
+    let mut any_cover_present = false;
+    let mut any_lyric_present = false;
     for audio in audios {
         if targets.contains(audio) {
             match embed(audio, cover, lyric, srt, opts.force, opts.dry_run) {
                 Ok(r) => {
                     report_embed(audio, root, r, opts.dry_run, stats);
-                    any_cover = any_cover || r.cover_embedded;
-                    any_lyric = any_lyric || r.lyrics_embedded;
+                    any_cover_present = any_cover_present || r.cover_present;
+                    any_lyric_present = any_lyric_present || r.lyrics_present;
                 }
                 Err(e) => {
                     stats.errored += 1;
@@ -111,7 +119,7 @@ fn embed_targets(
             println!("  [--]  {}  not selected", display(audio, root));
         }
     }
-    (any_cover, any_lyric)
+    (any_cover_present, any_lyric_present)
 }
 
 fn report_embed(audio: &Path, root: &Path, r: EmbedResult, dry_run: bool, stats: &mut Stats) {
