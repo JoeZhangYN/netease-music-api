@@ -289,13 +289,12 @@ POST /download/cancel/xyz789   → 取消（当前曲完成后停止）
 
 ### 预编译二进制（推荐）
 
-`dist/` 目录提供 3 个平台的预编译静态链接二进制：
+`dist/` 目录提供预编译静态链接二进制：
 
 | 文件 | 平台 |
 |------|------|
 | `netease-music-api-windows-x64.exe` | Windows x86_64 |
 | `netease-music-api-linux-x64` | Linux x86_64 (musl) |
-| `netease-music-api-linux-arm64` | Linux aarch64 (musl) |
 
 musl 静态链接，前端编译时嵌入，单文件部署，无需任何运行时依赖。
 
@@ -472,7 +471,7 @@ server {
 | Web 框架 | Axum 0.8 |
 | 异步运行时 | Tokio |
 | HTTP 客户端 | reqwest (rustls-tls) |
-| 音频标签 | lofty 0.22 |
+| 音频标签 | lofty 0.24 |
 | 并发 HashMap | DashMap 6 |
 | ZIP 打包 | zip 2 |
 | 加密 | AES-128-ECB (网易云 EAPI) |
@@ -485,17 +484,14 @@ server {
 
 ## 跨平台编译
 
-需要安装 [cross](https://github.com/cross-rs/cross)（`cargo install cross`）和 Docker。
+Windows host 上推荐用 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)（依赖 zig 0.16+ 已经在用，无需 musl-gcc / docker）。
 
 ```bash
 # Windows x64 — 原生编译
 cargo build --release --target x86_64-pc-windows-msvc
 
 # Linux x64 — musl 静态链接（兼容 CentOS 7+）
-cross build --release --target x86_64-unknown-linux-musl
-
-# Linux ARM64 — musl 静态链接
-cross build --release --target aarch64-unknown-linux-musl
+cargo zigbuild --release --target x86_64-unknown-linux-musl
 ```
 
 产物复制到 `dist/` 目录：
@@ -503,8 +499,9 @@ cross build --release --target aarch64-unknown-linux-musl
 ```bash
 cp target/x86_64-pc-windows-msvc/release/netease-music-api.exe  dist/netease-music-api-windows-x64.exe
 cp target/x86_64-unknown-linux-musl/release/netease-music-api    dist/netease-music-api-linux-x64
-cp target/aarch64-unknown-linux-musl/release/netease-music-api   dist/netease-music-api-linux-arm64
 ```
+
+> 同时 `Cargo.toml` 的 `[workspace.metadata.migrate-dist]` 段已配好 `migrate dist` 一条命令完成 `cargo build (windows) + cargo zigbuild (linux) + 重命名 + 打包`。
 
 ## 从 Python 版本迁移
 
@@ -514,6 +511,28 @@ cp target/aarch64-unknown-linux-musl/release/netease-music-api   dist/netease-mu
 cp /path/to/python-version/data/parse_stats.json /opt/netease-music-api/data/
 cp /path/to/python-version/cookie.txt /opt/netease-music-api/cookie.txt
 ```
+
+## 周边工具：embed-assets
+
+workspace 内附带的离线小工具 `crates/embed-assets/`，把同目录下同名 `.jpg`/`.png`/`.lrc`（以及 `.srt`，自动转 LRC 风格）嵌入相邻音频文件 tag（cover + USLT/UnsyncLyrics），消耗的源资产归集到扫描根目录的 `_used/` 子目录。
+
+适合：网易云下载后想把封面/歌词合进音频文件、清理散落的 sidecar 文件。
+
+```bash
+cargo build --release -p embed-assets
+# 产物：target/release/embed-assets(.exe)
+
+# 交互式：双击运行 / 直接执行，按提示输入路径
+./target/release/embed-assets
+
+# CLI
+./target/release/embed-assets <DIR> [--no-recursive] [--force] [--dry-run] [--no-move] [-y]
+```
+
+- 默认递归扫描，多音频同名（且字节不同）走交互式选择；字节级相同的副本静默全合并
+- 嵌入成功后 `.jpg`/`.lrc` 自动归集到 `<root>/_used/`（已存在同名且字节相同则去重删源，否则加 `-NN` 后缀保留），`--no-move` 跳过此步
+- `--force` 即使已有 cover/lyrics 也覆盖；`--dry-run` 只打印不写盘
+- 依赖与主服务隔离（lofty 0.24 / clap 4 / walkdir / encoding_rs），不影响发布二进制大小
 
 ## 致谢
 
