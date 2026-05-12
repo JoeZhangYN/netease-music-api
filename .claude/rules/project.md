@@ -117,6 +117,58 @@ git commit -m "..."   # hook 二次跑通过
 失败延后到 CI，反而需要多一次 commit 修复（短路径反模式典型，见
 `~/.claude/disciplines/discipline-workflow-rhythm.md#短路径反模式`）。
 
+### Commit message 多行写法（避免 shell tool quoting 跨界注入）
+
+本仓 win32 环境同时暴露 Bash tool（git-bash）和 PowerShell tool。两套 quoting 互不兼容：
+
+| Shell | 字面多行 here-string | 不识别的对方语法 |
+|-------|---------------------|----------------|
+| PowerShell | `@'...'@` (literal) / `@"..."@` (interpolated) | bash heredoc `<<EOF` |
+| bash (git-bash) | `<<'EOF' ... EOF` | PowerShell here-string `@'...'@`——**`@` 被当字面字符** |
+
+**反例**（本仓 2026-05-12 真实复现，commit `d502572` amend 前）：
+
+```bash
+# Bash tool 调用
+git commit -m @'
+fix(ci): cargo fmt 漂移修复
+...
+'@
+# 实际 subject: "@ fix(ci): cargo fmt 漂移修复"
+# → 触发"裸 @" 红线（git host 解析为用户提及，参见
+#   ~/.claude/disciplines/architecture-and-format.md "Commit subject 禁裸 @ token"）
+# → 必须 amend 才能 push
+```
+
+**根因**：bash 不把 `@'` 视为 quoting 边界，单引号 `'...'` 才是 bash 强引用；`@` 漏出
+来作为字面字符变成 subject 首字符。AI 误用 PowerShell here-string 语法（"看着合理"）+
+`@` 红线（独立另一条规则）= 组合陷阱。
+
+**正确做法（跨 shell tool 通用，单一 SOT）**：
+
+```bash
+# 方案 A: 写入文件 + -F（推荐，无 quoting 风险）
+cat > .git/MSG.txt << 'EOF'
+fix(ci): subject 一行 ASCII
+
+body 多行内容
+- 第一点
+- 第二点
+EOF
+git commit -F .git/MSG.txt
+rm .git/MSG.txt
+
+# 方案 B: 多个 -m（git 自动空行拼接 subject + body）
+git commit -m "fix(ci): subject 一行" -m "body 第一段" -m "body 第二段"
+```
+
+**自检触发语**（写多行 commit message 前必问）：
+1. 我用的是 Bash tool 还是 PowerShell tool？
+2. 我写的 quoting 语法属于哪个 shell？两者一致吗？
+3. message 里是否含 `@` / `$` / 反引号等 shell metachar？
+
+任一答错 → 走方案 A（`-F <file>`），跨 shell 零陷阱。
+
 ---
 
 ## Domain SOT Exemptions
