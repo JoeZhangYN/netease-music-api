@@ -5,7 +5,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use netease_kernel::observability::LogEvent;
-use rand::Rng;
+use rand::RngExt;
 use tracing::warn;
 
 use crate::http::error::HttpFailureKind;
@@ -19,7 +19,7 @@ use super::policy::RetryPolicy;
 /// fallback 路径应用，**不**对 `retry_after` 服务端建议加 jitter（服务端建议
 /// 尊重原值，铁律 §10）。
 fn apply_jitter(base: Duration) -> Duration {
-    let factor: f64 = rand::thread_rng().gen_range(0.5..=1.5);
+    let factor: f64 = rand::rng().random_range(0.5..=1.5);
     let ms = (base.as_millis() as f64 * factor) as u64;
     Duration::from_millis(ms)
 }

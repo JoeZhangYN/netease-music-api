@@ -4,12 +4,16 @@
 //! 跨信任边界（用户输入 URL/ID 解析）→ common.md "关键路径" 必加 proptest。
 
 use netease_infra::extract_id::extract_music_id;
+use netease_infra::http::{make_client, ClientProfile};
 use proptest::prelude::*;
 use reqwest::Client;
 
 /// 构造一个不会发起真实网络请求的 client（仅用于签名匹配；
-/// extract 内部只对 163cn.tv 短链才发请求，本测试避开此分支）
+/// extract 内部只对 163cn.tv 短链才发请求，本测试避开此分支）。
+/// 走 make_client 是为了触发 rustls CryptoProvider 的 Once 装载——
+/// reqwest 0.13 用 rustls-no-provider feature 时直接 Client::builder() 会 panic。
 fn dummy_client() -> Client {
+    let _warmup = make_client(ClientProfile::Parse);
     Client::builder()
         .timeout(std::time::Duration::from_millis(1))
         .build()

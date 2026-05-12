@@ -15,6 +15,7 @@
 //! "stuck at 90%, retry 1-2x to finish" user pain.
 
 use netease_infra::download::engine::{download_file_ranged, part_path_for, DownloadConfig};
+use netease_infra::http::{make_client, ClientProfile};
 use std::time::Duration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -55,7 +56,7 @@ async fn successful_single_stream_renames_part_to_final() {
     let final_path = dir.path().join("output.mp3");
     let url = format!("{}/song.mp3", server.uri());
 
-    let client = reqwest::Client::new();
+    let client = make_client(ClientProfile::Download);
     let config = DownloadConfig::default();
 
     download_file_ranged(&client, &url, &final_path, body.len() as u64, None, &config)
@@ -93,7 +94,7 @@ async fn download_error_leaves_no_final_file() {
     let final_path = dir.path().join("fail.mp3");
     let url = format!("{}/fail.mp3", server.uri());
 
-    let client = reqwest::Client::new();
+    let client = make_client(ClientProfile::Download);
     let mut config = DownloadConfig::default();
     config.max_retries = 1;
 
@@ -145,7 +146,7 @@ async fn outer_timeout_unblocks_when_server_hangs() {
     let final_path = dir.path().join("slow.mp3");
     let url = format!("{}/slow", server.uri());
 
-    let client = reqwest::Client::new();
+    let client = make_client(ClientProfile::Download);
     let mut config = DownloadConfig::default();
     config.max_retries = 1;
 

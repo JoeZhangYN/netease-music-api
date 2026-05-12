@@ -29,4 +29,6 @@ devnull
 .claude/scheduled_tasks.lock
 .claude/.audit-tmp/
 .claude/.state/
+.claude/.gate-state/
+.claude/dream/
 *.bak

@@ -12,12 +12,16 @@ netease-domain = { path = "../domain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 async-trait = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
-lofty = "0.22"
-aes = "0.8"
-ecb = "0.1"
-cipher = { version = "0.4", features = ["block-padding"] }
-md-5 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "stream", "rustls-no-provider"] }
+# reqwest 0.13 默认 TLS provider 是 aws-lc-rs（需 cmake/clang），切回 ring（纯 Rust + asm）
+# 与 0.12 行为等价；zigbuild Linux x64 cross-compile 直接通过。
+# CryptoProvider 在 client_builder::make_client 单源装载（Once）。
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+lofty = "0.24"
+aes = "0.9"
+ecb = "0.2"
+cipher = { version = "0.5", features = ["block-padding"] }
+md-5 = "0.11"
 base64 = "0.22"
 zip = { version = "2", default-features = false }
 futures = "0.3"
@@ -27,13 +31,13 @@ tokio-util = { version = "0.7", features = ["io"] }
 dashmap = "6"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
-rand = "0.8"
+rand = "0.10"
 url = "2"
 hex = "0.4"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 fs2 = "0.4"
 tracing = "0.1"
-bcrypt = "0.17"
+bcrypt = "0.19"
 thiserror = "2"
-governor = "0.7"
+governor = "0.10"

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use rand::Rng;
+use rand::RngExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 
@@ -58,7 +58,7 @@ impl MusicApi for NeteaseApi {
         cookies: &HashMap<String, String>,
     ) -> Result<SongUrlData, AppError> {
         let mut config = default_config();
-        let request_id = rand::thread_rng().gen_range(20_000_000_u32..30_000_000);
+        let request_id = rand::rng().random_range(20_000_000_u32..30_000_000);
         config.insert("requestId".into(), Value::String(request_id.to_string()));
 
         let song_id_num: i64 = song_id.parse().map_err(|_e: std::num::ParseIntError| {

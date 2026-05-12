@@ -1,5 +1,5 @@
 use aes::Aes128;
-use cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyInit};
+use cipher::{block_padding::Pkcs7, BlockModeEncrypt, KeyInit};
 use md5::{Digest, Md5};
 use serde_json::Value;
 use url::Url;
@@ -42,7 +42,7 @@ pub fn encrypt_params(url_str: &str, payload: &Value) -> String {
     // buf 已 padded 到 16 倍数（line 36），AES-128-ECB 在该 buf 上 encrypt_padded_mut 恒成功
     #[allow(clippy::expect_used)]
     let encrypted = enc
-        .encrypt_padded_mut::<Pkcs7>(&mut buf, params_bytes.len())
+        .encrypt_padded::<Pkcs7>(&mut buf, params_bytes.len())
         .expect("encryption invariant: pre-padded buf len % 16 == 0");
 
     hex_digest(encrypted)

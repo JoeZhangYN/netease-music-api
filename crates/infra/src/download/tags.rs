@@ -69,12 +69,11 @@ fn write_tags_inner(
 
     if let Some(data) = cover_data {
         if !data.is_empty() {
-            let picture = Picture::new_unchecked(
-                PictureType::CoverFront,
-                Some(MimeType::Jpeg),
-                None,
-                data.to_vec(),
-            );
+            // lofty 0.24: builder pattern replaced positional `Picture::new_unchecked`.
+            let picture = Picture::unchecked(data.to_vec())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(MimeType::Jpeg)
+                .build();
             tag.push_picture(picture);
         }
     }

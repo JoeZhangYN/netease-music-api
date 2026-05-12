@@ -6,9 +6,21 @@
 //! 解析与下载的 timeout 默认值保留差异（请求-响应 vs 流式大文件性质不同），
 //! 通过 `ClientProfile` 显式区分。pool 配置共享。
 
+use std::sync::Once;
 use std::time::Duration;
 
 use reqwest::Client;
+
+/// reqwest 0.13 用 `rustls-no-provider` feature 时必须在首个 TLS 握手前装一个
+/// `CryptoProvider`；选 ring 与 0.12 默认对齐，避免 aws-lc-rs 的 cmake/clang
+/// 依赖（zigbuild Linux x64 cross-compile 会缺这些）。`Once` 保证全进程仅装一次，
+/// `install_default` 重复调用返 Err，被吞掉是预期行为。
+fn ensure_rustls_provider() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// 显式区分两条链路的 client 行为。新增 profile 时编译器穷举强制更新 builder。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +52,7 @@ impl ClientProfile {
 /// pool_max_idle_per_host=10 / pool_idle_timeout=90s 在两条链路一致，
 /// 直接散在 builder 内部。
 pub fn make_client(profile: ClientProfile) -> Client {
+    ensure_rustls_provider();
     // builder pattern + 全静态参数（无 env-driven proxy/cert）→ build 恒成功
     #[allow(clippy::expect_used)]
     Client::builder()
