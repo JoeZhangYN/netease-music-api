@@ -8,6 +8,8 @@ use tracing::warn;
 
 use netease_domain::model::music_info::MusicInfo;
 
+use super::lyrics_merge::merge_bilingual_lrc;
+
 /// PR-I — async wrapper：lofty 写标签 ~50ms blocking IO，spawn_blocking
 /// 让 tokio runtime 在等待期间继续服务其他请求。同步 `write_music_tags`
 /// 保留供测试/sync 上下文使用。
@@ -59,13 +61,7 @@ fn write_tags_inner(
     };
 
     let mut tag = Tag::new(tag_type);
-    tag.set_title(info.name.clone());
-    tag.set_artist(info.artists.clone());
-    tag.set_album(info.album.clone());
-
-    if info.track_number > 0 {
-        tag.set_track(info.track_number as u32);
-    }
+    populate_basic_tags(&mut tag, info);
 
     if let Some(data) = cover_data {
         if !data.is_empty() {
@@ -83,16 +79,26 @@ fn write_tags_inner(
         Err(e) if cover_data.is_some() => {
             warn!("Tag write with cover failed: {}, retrying without cover", e);
             let mut tag_no_cover = Tag::new(tag_type);
-            tag_no_cover.set_title(info.name.clone());
-            tag_no_cover.set_artist(info.artists.clone());
-            tag_no_cover.set_album(info.album.clone());
-            if info.track_number > 0 {
-                tag_no_cover.set_track(info.track_number as u32);
-            }
+            populate_basic_tags(&mut tag_no_cover, info);
             tag_no_cover.save_to_path(file_path, WriteOptions::default())?;
             Ok(())
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+fn populate_basic_tags(tag: &mut Tag, info: &MusicInfo) {
+    tag.set_title(info.name.clone());
+    tag.set_artist(info.artists.clone());
+    tag.set_album(info.album.clone());
+
+    if info.track_number > 0 {
+        tag.set_track(info.track_number as u32);
+    }
+
+    let lyrics = merge_bilingual_lrc(&info.lyric, &info.tlyric);
+    if !lyrics.is_empty() {
+        tag.insert_text(ItemKey::Lyrics, lyrics);
     }
 }
 
