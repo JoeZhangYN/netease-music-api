@@ -236,7 +236,10 @@ async fn main() {
 
     println!();
     println!("{}", "=".repeat(60));
-    println!("  Netease Cloud Music API v2.0.0 (Rust/Axum)");
+    println!(
+        "  Netease Cloud Music API v{} (Rust/Axum)",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("{}", "=".repeat(60));
     println!("  Listen:     http://{}:{}", config.host, config.port);
     println!("  Cookie:     {} [{}]", cookie_abs.display(), cookie_status);
@@ -366,7 +369,7 @@ fn cleanup_old_files(dir: &std::path::Path, max_age_secs: u64) {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         if age > max_age_secs {
-            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&path); // idempotency-ok: TTL cleanup of own downloads/ files, mtime>max_age 即过期
         }
     }
 }

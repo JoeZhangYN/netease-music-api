@@ -21,7 +21,7 @@ pub async fn api_info(State(state): State<Arc<AppState>>) -> (StatusCode, Json<A
     APIResponse::success(
         json!({
             "name": "网易云音乐API服务",
-            "version": "2.0.0",
+            "version": env!("CARGO_PKG_VERSION"),
             "description": "提供网易云音乐相关API服务",
             "endpoints": {
                 "/health": "GET - 健康检查",

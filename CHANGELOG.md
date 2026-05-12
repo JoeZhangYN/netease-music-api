@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-05-12
+
+文档与开发体验维护 release。主服务行为无变化；新增 workspace 周边工具 embed-assets，CI fmt 红线机械防护落地。
+
+### Added
+- **`crates/embed-assets/`** — workspace 内附带的离线小工具，扫描目录里同名 `.jpg`/`.png`/`.lrc`（以及 `.srt`，自动转 LRC 风格）嵌入相邻音频 tag（cover + USLT/UnsyncLyrics），消耗的源资产归集到 `<root>/_used/` 子目录。支持递归 / 单目录 / dry-run / force / 交互式同 stem 多音频选择 / 字节级相同副本静默全合并。
+  - CLI: `embed-assets [<DIR>] [--no-recursive] [--force] [--dry-run] [--no-move] [-y]`
+  - 不进 `dist/` 发布产物；依赖与主服务隔离（lofty 0.24 / clap 4 / walkdir / encoding_rs）
+- **CI fmt 红线 PreToolUse hook**（`.claude/scripts/precommit-cargo-fmt-gate.sh`）— `git commit` 时机械拦截 `cargo fmt --all -- --check` 失败，闭合 v3.0.2 之前两次"fmt 漂移历史遗留 → CI 双红"的复发链（`3a93e04` / `ae7907f`）。规则升级反向引用项目 `.claude/rules/project.md`。
+
+### Changed
+- **`cargo clippy uninlined_format_args` 全仓修复** — workspace lints 已声明 `uninlined_format_args = "warn"`，本轮把残留 `format!("... {}", x)` 等批量改成 `format!("... {x}")` inline-args 形式；纯代码风格统一，无运行时变化。
+
+### Fixed
+- **3 处版本号字面量漂移** — 启动 banner (`src/main.rs`) / `GET /api/info` (`crates/adapter/.../info.rs`) / `GET /health` (`crates/adapter/.../health.rs`) 三处都硬编码 `"2.0.0"`，全部改用 `env!("CARGO_PKG_VERSION")` 取 workspace 单源；下一版本起这三处不再需要人工同步。
+
+### Docs
+- `README.md`：技术栈表格 `lofty 0.22 → 0.24`（v3.0.2 deps bump 漏同步），「预编译二进制」/「跨平台编译」两段删除已退役的 `linux-arm64`，跨平台编译说明从 `cross` 改为 `cargo-zigbuild`（与 `Cargo.toml workspace.metadata.migrate-dist` 实际流程对齐），末尾新增「周边工具：embed-assets」一节。
+- `.claude/rules/project.md`：commit message 多行写法规则从项目级删除转引全局 CLI `dream git commit --stdin` SOT；新增 shell quoting 跨界陷阱节。
+
 ## [3.0.2] - 2026-05-05
 
 下载/解析偶发失败硬化 + audit-all 闭合 patch release。用户面闭合"卡 90%+"与"退避似乎没生效"两类报告；workspace.package 单源化为后续版本 bump 简化。

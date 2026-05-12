@@ -31,7 +31,7 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> (StatusCode, Js
             "timestamp": timestamp,
             "cookie_status": cookie_status,
             "downloads_dir": downloads_dir.to_string_lossy(),
-            "version": "2.0.0",
+            "version": env!("CARGO_PKG_VERSION"),
         }),
         "API服务运行正常",
     )
