@@ -103,7 +103,7 @@ fn load_trims_whitespace() {
 
     let hash = hash_password("test").unwrap();
     // 写入带前后空白 + 换行
-    std::fs::write(&path, format!("\n\t {} \n\r\n", hash)).unwrap();
+    std::fs::write(&path, format!("\n\t {hash} \n\r\n")).unwrap();
 
     let loaded = load_password_hash(&path).expect("应能 trim 后加载");
     assert_eq!(loaded, hash);

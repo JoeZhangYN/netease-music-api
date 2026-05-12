@@ -244,7 +244,7 @@ async fn main() {
     println!("  Stats:      {}", stats_abs.display());
     println!("  Logs:       {}", logs_abs.display());
     println!("  Log level:  {}", config.log_level);
-    println!("  Admin:      {}", admin_status_msg);
+    println!("  Admin:      {admin_status_msg}");
     println!();
     println!("  Endpoints:");
     println!("  GET  /health              Health check");
@@ -273,8 +273,8 @@ async fn main() {
         Err(e) => {
             eprintln!();
             eprintln!("============================================================");
-            eprintln!("  ❌ 启动失败：无法绑定 {}", addr);
-            eprintln!("  原因：{}", e);
+            eprintln!("  ❌ 启动失败：无法绑定 {addr}");
+            eprintln!("  原因：{e}");
             if e.kind() == std::io::ErrorKind::AddrInUse {
                 eprintln!();
                 eprintln!("  端口已被其他进程占用。处理方法：");
@@ -296,7 +296,7 @@ async fn main() {
     };
 
     if let Err(e) = axum::serve(listener, app).await {
-        eprintln!("\n❌ 服务运行错误：{}", e);
+        eprintln!("\n❌ 服务运行错误：{e}");
         pause_if_double_click();
         std::process::exit(1);
     }

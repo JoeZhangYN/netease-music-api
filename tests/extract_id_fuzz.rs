@@ -126,7 +126,7 @@ proptest! {
             .build()
             .unwrap();
         let client = dummy_client();
-        let url = format!("https://music.163.com/song?id={}", n);
+        let url = format!("https://music.163.com/song?id={n}");
         let result = rt.block_on(extract_music_id(&url, &client));
         prop_assert_eq!(result, n.to_string());
     }

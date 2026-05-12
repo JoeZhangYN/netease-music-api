@@ -69,7 +69,7 @@ fn c2_build_file_path_does_not_consume_url() {
 #[test]
 fn c2_debug_format_redacts_url() {
     let url = DownloadUrl::new("https://secret.cdn.example.com/file.mp3".into());
-    let debug_output = format!("{:?}", url);
+    let debug_output = format!("{url:?}");
     assert_eq!(debug_output, "DownloadUrl([redacted])");
     assert!(!debug_output.contains("secret"));
 }
@@ -88,8 +88,7 @@ fn c5_non_terminal_stages_should_prevent_new_task() {
     for stage in non_terminal {
         assert!(
             !stage.is_terminal(),
-            "{:?} should not be terminal (dedup should block new task)",
-            stage
+            "{stage:?} should not be terminal (dedup should block new task)"
         );
     }
 }
@@ -176,7 +175,7 @@ fn valid_qualities_contains_expected_values() {
     ];
     assert_eq!(VALID_QUALITIES.len(), expected.len());
     for q in &expected {
-        assert!(VALID_QUALITIES.contains(q), "Missing quality: {}", q);
+        assert!(VALID_QUALITIES.contains(q), "Missing quality: {q}");
     }
 }
 
@@ -185,7 +184,7 @@ fn valid_types_contains_expected_values() {
     let expected = ["url", "name", "lyric", "json"];
     assert_eq!(VALID_TYPES.len(), expected.len());
     for t in &expected {
-        assert!(VALID_TYPES.contains(t), "Missing type: {}", t);
+        assert!(VALID_TYPES.contains(t), "Missing type: {t}");
     }
 }
 

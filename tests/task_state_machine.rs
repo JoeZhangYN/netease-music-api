@@ -150,9 +150,7 @@ fn valid_forward_transitions() {
         // All forward transitions in the happy path are valid
         assert!(
             !from.is_terminal() || (from == TaskStage::Done && to == TaskStage::Retrieved),
-            "Unexpected terminal-to-non-terminal: {:?} -> {:?}",
-            from,
-            to
+            "Unexpected terminal-to-non-terminal: {from:?} -> {to:?}"
         );
     }
 }
@@ -192,8 +190,7 @@ fn any_stage_can_transition_to_error() {
         let _error = TaskStage::Error;
         assert!(
             !stage.is_terminal() || *stage == TaskStage::Done,
-            "{:?} -> Error should be valid",
-            stage
+            "{stage:?} -> Error should be valid"
         );
     }
 }

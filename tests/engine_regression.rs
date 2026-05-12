@@ -71,8 +71,7 @@ async fn successful_single_stream_renames_part_to_final() {
     let part_path = part_path_for(&final_path);
     assert!(
         !part_path.exists(),
-        ".part file should be gone after atomic rename: {:?}",
-        part_path
+        ".part file should be gone after atomic rename: {part_path:?}"
     );
 }
 
@@ -99,7 +98,7 @@ async fn download_error_leaves_no_final_file() {
     config.max_retries = 1;
 
     let result = download_file_ranged(&client, &url, &final_path, 1024, None, &config).await;
-    assert!(result.is_err(), "500 must error, got: {:?}", result);
+    assert!(result.is_err(), "500 must error, got: {result:?}");
 
     // PR-3 ①：rename atomic — final-name file never appears on failure.
     assert!(
@@ -161,15 +160,13 @@ async fn outer_timeout_unblocks_when_server_hangs() {
     // 外层 timeout 必须 fire（Elapsed），而非 engine 自己 fail
     assert!(
         outer.is_err(),
-        "tokio::time::timeout must fire (got {:?})",
-        outer
+        "tokio::time::timeout must fire (got {outer:?})"
     );
 
     // 关键 SLA：必须在外层 timeout 范围内（+ 一点 jitter）返回控制权给调用方
     assert!(
         elapsed < Duration::from_secs(5),
-        "must time out within bounds, took {:?}",
-        elapsed
+        "must time out within bounds, took {elapsed:?}"
     );
 
     // 最终文件不应存在

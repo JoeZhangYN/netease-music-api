@@ -94,7 +94,7 @@ proptest! {
     #[test]
     fn download_url_debug_redacted(s in ".*") {
         let url = DownloadUrl::new(s);
-        let debug = format!("{:?}", url);
+        let debug = format!("{url:?}");
         prop_assert_eq!(debug, "DownloadUrl([redacted])");
     }
 }

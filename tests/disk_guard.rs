@@ -51,11 +51,10 @@ fn impossible_required_returns_disk_full() {
     let err = ensure_disk_space(tmp.path(), 1, u64::MAX, GRACE_SECS)
         .expect_err("不可能满足的 required 必返 Err(DiskFull)");
 
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert!(
         msg.contains("磁盘空间不足"),
-        "Err 信息应含'磁盘空间不足': {}",
-        msg
+        "Err 信息应含'磁盘空间不足': {msg}"
     );
 }
 
