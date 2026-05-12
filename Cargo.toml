@@ -4,6 +4,7 @@ members = [
     "crates/domain",
     "crates/infra",
     "crates/adapter",
+    "crates/embed-assets",
 ]
 
 [workspace.package]

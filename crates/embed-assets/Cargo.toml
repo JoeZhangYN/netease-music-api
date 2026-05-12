@@ -1,0 +1,18 @@
+[package]
+name = "embed-assets"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "embed-assets"
+path = "src/main.rs"
+
+[dependencies]
+lofty = "0.24"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+anyhow = "1"
+encoding_rs = "0.8"
