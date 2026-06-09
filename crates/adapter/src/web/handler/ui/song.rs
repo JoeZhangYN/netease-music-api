@@ -1,4 +1,5 @@
-//! `POST /ui/song` —— 单曲解析（始终 json 形态），返回 `#song-info` 片段。
+//! `POST /ui/song` —— 单曲解析（始终 json 形态），返回 `#song-detail-body` 内层片段
+//! （innerHTML swap；歌词/播放器区为 page_shell 持久节点，不在此片段内）。
 //! 编排照搬 `handler::song` 的 "json" 分支，仅换返回体。
 //!
 //! 不变量 B：`handle_json` 内只调一次 `get_song_url`；片段把已解析数据渲进 DOM，

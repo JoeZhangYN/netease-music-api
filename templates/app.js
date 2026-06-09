@@ -440,18 +440,36 @@
         var currentParsedId = '';
         var currentParsedMeta = null;
 
-        // 单曲解析 → 已迁 htmx（#parse-btn hx-post=/ui/song hx-target=#song-info）。
-        // 服务端直出详情片段；APlayer 初始化 + 歌词合并 + 下载优化元数据由下方 afterSwap
-        // 承接（读 #parsed-meta JSON）。点击即时反馈由 .htmx-request CSS（不变量 D）。
-        // 歌词合并仍用 lrctran（JS 岛，Phase 3 移进 Rust）。
-        document.body.addEventListener('htmx:afterSwap', function() {
-            var metaEl = document.getElementById('parsed-meta');
-            // 只处理「本次 swap 新进来」的 meta：dataset.done 标记防搜索等无关 swap 误触发
-            if (!metaEl || metaEl.dataset.done) return;
-            metaEl.dataset.done = '1';
+        // 单曲解析 → htmx（#parse-btn hx-post=/ui/song hx-target=#song-detail-body
+        // hx-swap=innerHTML）。服务端只直出「详情卡内层」；歌词区 / 播放器区是 page_shell
+        // 的持久节点，htmx 永不 swap → #aplayer 单一声明、容器恒在。
+        //
+        // 【单源编排 · 根治多源竞态，勿改回旧结构】旧版片段每次解析都重建 #aplayer，
+        // afterSwap 里 APlayer 给容器加的 `.aplayer` 类被 htmx settle 重置回片段原值
+        // （class=""）→ 所有 `.aplayer` scope CSS（`svg{width:100%}` / `.aplayer-icon-play
+        // {display:none}`）失配 → 控制图标渲染成铺满屏幕的巨型三角。现把 #aplayer 移出 swap
+        // 目标（详见 page_shell #song-info > #song-detail-body 结构），htmx 不再碰它，类稳定。
+        //
+        // 触发判据：afterSettle 且 swap 目标恰为 #song-detail-body（精确，stats 轮询等无关 swap
+        // 自动跳过；无需 dataset.done 兜底）。下载优化元数据 + 歌词合并(lrctran JS 岛)一并承接。
+        document.body.addEventListener('htmx:afterSettle', function(evt) {
+            if (!evt.target || evt.target.id !== 'song-detail-body') return;
+            var card = document.getElementById('song-info');
+            var lyricSec = document.getElementById('lyric-section');
+            var playerSec = document.getElementById('player-section');
+            if (card) card.classList.remove('area-hidden'); // 成功 / 错误都显示详情卡
 
-            var d;
-            try { d = JSON.parse(metaEl.textContent); } catch (e) { return; }
+            var metaEl = document.getElementById('parsed-meta');
+            var d = null;
+            if (metaEl) { try { d = JSON.parse(metaEl.textContent); } catch (e) { d = null; } }
+
+            // 错误 / 无数据：拆掉旧播放器，隐藏歌词与播放器区（仅显示错误文案）
+            if (!d) {
+                if (_apInstance) { try { _apInstance.destroy(); } catch (e) {} _apInstance = null; }
+                if (lyricSec) lyricSec.classList.add('area-hidden');
+                if (playerSec) playerSec.classList.add('area-hidden');
+                return;
+            }
 
             // 下载优化全局（#detail-download-btn 复用：避免重解析 + 携带歌词打 tag）
             currentParsedId = d.id;
@@ -464,8 +482,10 @@
             var lrc = d.lyric || '';
             if (d.tlyric) lrc = lrctran(d.lyric, d.tlyric);
             $('#lyric').html(lrc.replace(/\n/g, '<br>'));
+            if (lyricSec) lyricSec.classList.remove('area-hidden');
 
-            // APlayer 初始化
+            // APlayer 初始化（持久 #aplayer，htmx 不碰它 → `.aplayer` 类不被抹）
+            if (playerSec) playerSec.classList.remove('area-hidden');
             if (_apInstance) { try { _apInstance.destroy(); } catch (e) {} _apInstance = null; }
             var apEl = document.getElementById('aplayer');
             if (apEl) {

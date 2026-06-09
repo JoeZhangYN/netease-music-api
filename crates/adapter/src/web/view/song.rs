@@ -1,7 +1,8 @@
-//! 单曲详情片段 —— htmx `hx-target="#song-info" hx-swap="outerHTML"`。
+//! 单曲详情片段 —— htmx `hx-target="#song-detail-body" hx-swap="innerHTML"`。
 //!
-//! 服务端渲染可见详情（封面/标签/按钮）；歌词合并 + APlayer 初始化归 JS 岛
-//! （afterSwap 读 `#parsed-meta` JSON）。Phase 3 再把歌词合并移进 Rust。
+//! 仅直出「详情卡内层」（封面/标签/按钮 + #parsed-meta）；歌词区 / 播放器区是 page_shell
+//! 持久节点（#aplayer 单一声明，htmx 永不 swap），歌词合并 + APlayer 初始化归 JS 岛
+//! （afterSettle 读 `#parsed-meta` JSON）。Phase 3 再把歌词合并移进 Rust。
 //!
 //! 不变量 B：`/ui/song` 内 `handle_json` 只调一次 `get_song_url`；此处仅把已解析数据
 //! 渲进 DOM/data 属性，swap 不触发任何额外 URL/HEAD。
@@ -24,7 +25,10 @@ pub fn song_detail(vm: &SongDetailVM, requested_level: &str) -> Markup {
     let meta_json =
         serde_json::to_string(vm).map_or_else(|_| "{}".to_string(), |s| s.replace("</", "<\\/"));
 
-    wrap(&html! {
+    // 仅回「详情卡内层」（htmx innerHTML → #song-detail-body）。歌词区 / 播放器区是
+    // page_shell 持久节点，不随 swap 重建 —— 消除 #aplayer 多源重置竞态（巨型图标根因）。
+    // 歌词合并 + APlayer 初始化 + 下载优化元数据由 afterSettle 读下方 #parsed-meta 承接。
+    html! {
         div class="detail-header" {
             img id="detail-cover-img" class="detail-cover" src=(vm.pic) alt="封面" onclick="showBigPic(this.src)";
             div class="detail-meta" {
@@ -47,31 +51,15 @@ pub fn song_detail(vm: &SongDetailVM, requested_level: &str) -> Markup {
                 }
             }
         }
-        // 歌词区（#lyric 由 afterSwap 填充——歌词合并仍在 JS，Phase 3 移 Rust）
-        div class="lyric-section" id="lyric-section" {
-            h4 { "歌词 · Lyric" }
-            div class="lyric-box" id="lyric" {}
-            div class="section-handle" id="lyric-handle" {}
-        }
-        // 播放器区（#aplayer 由 afterSwap 初始化）
-        div class="player-section" id="player-section" {
-            div id="aplayer" {}
-            div class="section-handle" id="player-handle" {}
-        }
-        // afterSwap 数据载体（非可执行脚本）
+        // afterSettle 数据载体（非可执行脚本）—— 初始化 APlayer / 设 currentParsedMeta
         script type="application/json" id="parsed-meta" { (PreEscaped(meta_json)) }
-    })
+    }
 }
 
 /// 错误片段（handler 以 HTTP 200 返回，htmx 方能 swap）。
+/// 直出错误文案（innerHTML → #song-detail-body）；无 #parsed-meta → afterSettle 隐藏歌词/播放器区。
 pub fn error(msg: &str) -> Markup {
-    wrap(&html! {
-        div style="padding:24px;text-align:center;color:rgba(255,255,255,.5);" { (msg) }
-    })
-}
-
-fn wrap(inner: &Markup) -> Markup {
     html! {
-        div id="song-info" class="glass detail-card fade-in" { (inner) }
+        div style="padding:24px;text-align:center;color:rgba(255,255,255,.5);" { (msg) }
     }
 }
