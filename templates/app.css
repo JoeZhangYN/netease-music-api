@@ -366,7 +366,20 @@
     }
     .field input:focus, .field select:focus { border-bottom-color: var(--vermillion); }
     .field textarea:focus { border-color: var(--vermillion); }
-    .field select option { background: var(--vellum); color: var(--ink); }
+    /* 下拉弹窗：原生 popup 多为白底（浏览器常忽略深色 option 背景），故统一用「浅底深字」
+       保证强对比、跨浏览器可读；optgroup 分组标签用深棕加粗以醒目区分三类音质。 */
+    .field select option,
+    .collection-quality-select option {
+        background: #fbf6ec;
+        color: #1d160e;
+    }
+    .field select optgroup,
+    .collection-quality-select optgroup {
+        background: #e7dcc6;
+        color: #6b3f12;
+        font-weight: 700;
+        font-style: italic;
+    }
 
     /* ----- Buttons ----- */
     .btn-main {
@@ -848,9 +861,7 @@
         background-size: 5px 5px, 5px 5px;
         background-repeat: no-repeat;
     }
-    .collection-quality-select option {
-        background: var(--vellum); color: var(--ink);
-    }
+    /* collection 选择器的 option/optgroup 配色已并入上方「浅底深字」统一规则 */
 
     /* ----- Pic modal ----- */
     .modal-overlay {
