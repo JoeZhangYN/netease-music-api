@@ -92,7 +92,9 @@ adapter/web  →  domain/service  →  domain/port (trait)
 | 代码路径 | 职责 |
 |----------|------|
 | `src/main.rs` | 启动入口：初始化组件、组装 AppState、启动 Axum 服务 |
-| `templates/index.html` | Web 前端源码 (编译时 `include_str!` 嵌入二进制) |
+| `crates/adapter/src/web/view/` | Maud 服务端渲染视图层（首屏 `page_shell` + 各 htmx 片段） |
+| `crates/adapter/src/web/handler/ui/` | htmx 片段 handler（`/ui/*`，复用 service 编排、返回 Maud HTML） |
+| `templates/{app.css,app.js,vendor/htmx.min.js}` | 前端静态资源 (编译时 `include_str!` 内联) |
 
 ### 项目配置
 

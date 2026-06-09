@@ -28,7 +28,8 @@ docker compose up -d --build        # Docker 部署
 | 统计数据 | `data/` |
 | 日志文件 | `logs/` |
 | 下载缓存 | `downloads/` |
-| 前端模板 | `templates/index.html` (编译时嵌入二进制) |
+| 前端视图 (Maud SSR) | `crates/adapter/src/web/view/` |
+| 前端静态资源 | `templates/{app.css, app.js, vendor/htmx.min.js}` (编译时 `include_str!` 内联) |
 | 路由定义 | `crates/adapter/src/web/router.rs` |
 | 全局状态 | `crates/adapter/src/web/state.rs` |
 | Cargo 依赖 | `Cargo.toml` |
@@ -57,14 +58,15 @@ docker compose up -d --build        # Docker 部署
 
 - Rust 2021 edition
 - Axum 0.8 (Web 框架)
+- **Maud 0.27 (服务端 HTML 渲染) + htmx 2.0 (区域局部 swap) + tower middleware** — 纯 Rust 编排
 - Tokio (异步运行时)
 - reqwest (HTTP 客户端, rustls-tls)
-- lofty 0.22 (音频标签读写)
+- lofty 0.24 (音频标签读写)
 - DashMap 6 (并发 HashMap)
 - zip 2 (ZIP 打包)
 - AES-128-ECB (网易云加密)
 - bcrypt 0.17 (管理密码哈希)
-- jQuery 3.7.1 + APlayer 1.10.1 (前端)
+- APlayer 1.10.1 (音频播放 JS 岛) + 薄 jQuery (下载进度轮询/拖拽/动画 JS 岛)
 
 ---
 

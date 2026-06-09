@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
+  `templates/index.html`（2813 行 jQuery 单页，`include_str!` 整体嵌入）拆为：服务端 Maud
+  视图层 `crates/adapter/src/web/view/`（`page_shell` 首屏 + 各区域 HTML 片段）+ htmx 片段
+  路由 `crates/adapter/src/web/handler/ui/`（`/ui/search|song|playlist|album|stats|admin/*`）。
+  搜索/单曲/歌单/专辑/统计/管理面板全部改为「点击 → htmx 局部 swap 结果区、不整页刷新」。
+  CSS/JS/htmx 抽到 `templates/{app.css,app.js,vendor/htmx.min.js}` 编译时内联。
+  - **公共 JSON API 零破坏**：`/Song_V1` `/Search` `/Playlist` `/Album` `/Download` 等原路由
+    一字未改（外部消费方契约保留）；`/ui/*` 是独立的 HTML 片段路由集。
+  - **保留 3 块不可约 JS 岛**（浏览器专属 API）：APlayer 音频播放 + ZIP 浏览器下载触发 +
+    下载进度健壮轮询（网络抖动重试 / task-lost 检测 / 取消）。
+- **歌曲列表项单源** `view::components::song_item`（替代原 `songItemHTML`，search/playlist/album 三处共用）。
+- **管理面板配置 apply 单源** `handler::admin::apply_runtime_config`（JSON `PUT /admin/config` 与
+  htmx `PUT /ui/admin/config` 共用）；单位换算 + 字段映射 + `RuntimeConfig::validate` 校验全归服务端，
+  删除原 JS 的 `collectAdminConfig`/`validateAdminConfig` 重复。
+
+### Fixed
+- **「解析跳转后点击查询小卡顿」** —— 根因是 `#search-btn`（检索）点击后**无即时视觉反馈**
+  （4 个主动作按钮里唯一漏反馈的），网络往返期间用户以为卡住。htmx `.htmx-request` CSS 在点击
+  瞬间给按钮加 spinner（单源即时反馈，替代各按钮手写 `disabled+text`），根治该卡顿观感。
+- **管理面板保存配置 422 失效（pre-existing bug）** —— 原前端 `collectAdminConfig` 只发 16 字段给
+  `Json<RuntimeConfig>`（需 20 字段、无 serde default），必 422 反序列化失败。新 `PUT /ui/admin/config`
+  在服务端 load 当前配置 + 覆盖 16 UI 字段，修复保存功能并顺带保留 UI 未暴露的 4 字段
+  （rate_limit / quality_fallback）不被重置。
+
 ## [3.0.4] - 2026-05-12
 
 embed-assets fast-follow patch。主服务行为无变化。

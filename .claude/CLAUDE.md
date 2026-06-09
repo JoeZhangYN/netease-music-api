@@ -44,11 +44,13 @@ v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + �
 | 持久化 | `crates/infra/src/persistence/` | `references/infra-persistence.md` |
 | 封面缓存 | `crates/infra/src/cache/` | `references/infra-cache.md` |
 | 认证/密码 | `crates/infra/src/auth/` | — |
-| HTTP handler | `crates/adapter/src/web/handler/` | `references/adapter-handler.md` |
+| HTTP handler (JSON API) | `crates/adapter/src/web/handler/` | `references/adapter-handler.md` |
+| htmx 片段 handler | `crates/adapter/src/web/handler/ui/` | `references/adapter-handler.md` |
+| 视图层 (Maud SSR) | `crates/adapter/src/web/view/` | — |
 | 路由/状态/响应 | `crates/adapter/src/web/` | `references/adapter-web.md` |
 | 跨层共享 | `crates/kernel/src/` | `references/shared.md` |
 | 入口 + 依赖 | `src/main.rs` | `references/entry.md` |
-| 前端 | `templates/index.html` (编译时嵌入二进制) | — |
+| 前端 | Maud SSR (`view/`) + htmx 区域 swap；CSS/JS/htmx = `templates/{app.css,app.js,vendor/htmx.min.js}` 编译时内联 | — |
 | 技能黑名单 | `.claude/skills.yaml` | — |
 
 ## ctx 内容索引

@@ -162,6 +162,15 @@ pub async fn admin_put_config(
         return APIResponse::error(&msg, 400);
     }
 
+    apply_runtime_config(&state, &new_config);
+
+    APIResponse::success(json!({}), "配置已保存并生效")
+}
+
+/// 应用已校验的 `RuntimeConfig`（store + save + resize 信号量 + 更新任务存储/封面缓存）。
+/// 单源：JSON `admin_put_config` 与 `/ui/admin/config` PUT 共用（应抽尽抽，避免两处漂移）。
+/// **调用方须先 `validate()`**。
+pub(crate) fn apply_runtime_config(state: &AppState, new_config: &RuntimeConfig) {
     let old_config = (**state.runtime_config.load()).clone();
 
     state.runtime_config.store(Arc::new(new_config.clone()));
@@ -205,8 +214,14 @@ pub async fn admin_put_config(
         new_config.cover_cache_ttl_secs,
         new_config.cover_cache_max_size,
     );
+}
 
-    APIResponse::success(json!({}), "配置已保存并生效")
+/// 校验 X-Admin-Token（`/ui/admin/*` 用，返回 bool 而非 JSON 错误）。
+pub(crate) fn token_ok(headers: &HeaderMap, state: &AppState) -> bool {
+    headers
+        .get("X-Admin-Token")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| !t.is_empty() && token::validate_token(t, &state.admin_secret).is_ok())
 }
 
 /// PR-10 — public schema of `RuntimeConfig` numeric bounds.

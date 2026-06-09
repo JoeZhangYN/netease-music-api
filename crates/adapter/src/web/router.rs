@@ -10,6 +10,24 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(handler::index::index_handler))
         .route("/health", get(handler::health::health_check))
+        // ===== /ui/* — htmx 片段路由（返回 Maud HTML，独立于公共 JSON API，不变量 A）=====
+        .route("/ui/search", post(handler::ui::search::ui_search))
+        .route("/ui/song", post(handler::ui::song::ui_song))
+        .route("/ui/playlist", post(handler::ui::playlist::ui_playlist))
+        .route("/ui/album", post(handler::ui::album::ui_album))
+        .route("/ui/stats", get(handler::ui::stats::ui_stats))
+        .route("/ui/admin", get(handler::ui::admin::ui_admin))
+        .route("/ui/admin/login", post(handler::ui::admin::ui_admin_login))
+        .route("/ui/admin/setup", post(handler::ui::admin::ui_admin_setup))
+        .route(
+            "/ui/admin/config",
+            axum::routing::put(handler::ui::admin::ui_admin_config_put),
+        )
+        .route("/ui/admin/reset", post(handler::ui::admin::ui_admin_reset))
+        .route(
+            "/ui/admin/logout",
+            post(handler::ui::admin::ui_admin_logout),
+        )
         // Song info
         .route(
             "/song",

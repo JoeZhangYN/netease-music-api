@@ -17,9 +17,18 @@
 pub fn build_router(state: Arc<AppState>) -> Router;
 ```
 
-路由映射: /song, /search, /playlist, /album, /download/*, /cookie/*, /parse/stats/*, /health, /api/info, / (index), /admin/*
+路由映射: /song, /search, /playlist, /album, /download/*, /cookie/*, /parse/stats/*, /health, /api/info, / (index), /admin/*, **/ui/***
 
-管理路由:
+公共 JSON API 路由（不变量 A：外部契约，迁移未动）:
+- `/song` `/Song_V1` `/search` `/Search` `/playlist` `/Playlist` `/album` `/Album` `/download*` → `Json<APIResponse>`
+
+htmx 片段路由（返回 Maud HTML，供前端区域 swap；handler 在 `handler/ui/`、视图在 `view/`）:
+- `POST /ui/search` `/ui/song` `/ui/playlist` `/ui/album` → 各结果区 outerHTML 片段
+- `GET  /ui/stats` → 统计栏（htmx 轮询 every 3s）
+- `GET  /ui/admin` → 登录/设置视图；`POST /ui/admin/{login,setup,reset,logout}`；`PUT /ui/admin/config`
+  （X-Admin-Token 头由前端 `htmx:configRequest` JS 岛从 `#admin-config-view[data-token]` 注入）
+
+管理路由 (JSON API):
 - `GET  /admin/status` → admin_status
 - `POST /admin/setup` → admin_setup
 - `POST /admin/login` → admin_login

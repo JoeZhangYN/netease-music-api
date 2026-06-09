@@ -19,7 +19,13 @@
 | stats.rs | 57 | 统计 + SSE |
 | health.rs | 40 | 健康检查 |
 | info.rs | 48 | API 信息 |
-| index.rs | 8 | 首页模板 |
+| index.rs | 9 | 首页 (Maud SSR：渲染 `view::page::page_shell()`) |
+| ui/ | — | htmx 片段 handler 子模块 (search/song/playlist/album/stats/admin) —— 复用 `*_service` 编排 + `parse_body`/`parse_semaphore`/`stats`，返回 Maud `Markup` 而非 JSON。路由见 adapter-web.md `/ui/*` |
+
+> **htmx/Maud 迁移**：原 jQuery 单页 (`templates/index.html`) 已迁为「Maud 服务端渲染 (`web/view/`)
+> + htmx 区域局部 swap」。公共 JSON API handler（本表上方各 `*.rs`）**一字未改**（不变量 A：外部契约保留）；
+> 新增 `ui/` 子模块产 HTML 片段供前端 htmx 消费。`admin::apply_runtime_config` / `token_ok` 抽为
+> pub(crate) 供 JSON 与 `/ui/admin` 两侧共用（单源）。
 
 ## song.rs
 

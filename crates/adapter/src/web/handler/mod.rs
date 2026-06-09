@@ -12,3 +12,4 @@ pub mod playlist;
 pub mod search;
 pub mod song;
 pub mod stats;
+pub mod ui;
