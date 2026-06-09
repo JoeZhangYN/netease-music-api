@@ -61,6 +61,10 @@ pub fn determine_file_extension(url: &str, file_type: &str) -> &'static str {
         ".flac"
     } else if url_lower.contains(".m4a") || file_type == "m4a" {
         ".m4a"
+    } else if url_lower.contains(".mp4") || file_type == "av3a" {
+        // 杜比全景声 = av3a（Audio Vivid），MP4 容器。命名为 .mp4 而非误判 .mp3。
+        // 注：av3a 非标准 MP4 音频，lofty 无法嵌标签（tags.rs 对未知 ext 静默跳过）。
+        ".mp4"
     } else {
         ".mp3"
     }

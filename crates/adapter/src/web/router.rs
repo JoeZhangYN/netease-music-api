@@ -10,6 +10,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(handler::index::index_handler))
         .route("/health", get(handler::health::health_check))
+        // 浏览器可播音频代理：av3a(杜比全景声)等不可播档 → 重定向到可播档(无损)直链
+        .route("/stream/{id}", get(handler::stream::stream_audio))
         // ===== /ui/* — htmx 片段路由（返回 Maud HTML，独立于公共 JSON API，不变量 A）=====
         .route("/ui/search", post(handler::ui::search::ui_search))
         .route("/ui/song", post(handler::ui::song::ui_song))

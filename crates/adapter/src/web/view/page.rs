@@ -252,6 +252,8 @@ pub fn page_shell() -> Markup {
                         }
                         // 播放器区（持久 — #aplayer 单一声明，htmx 永不 swap，APlayer 类稳定）
                         div class="player-section area-hidden" id="player-section" {
+                            // 不可在线试听提示（av3a/杜比全景声时 afterSettle 显示并填文案）
+                            div class="player-note area-hidden" id="player-note" {}
                             div id="aplayer" {}
                             div class="section-handle" id="player-handle" {}
                         }
@@ -392,6 +394,7 @@ mod tests {
             "lyric",
             "lyric-handle",
             "player-section",
+            "player-note",
             "aplayer",
             "player-handle",
             "playlist-result",

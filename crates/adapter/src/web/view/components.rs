@@ -48,7 +48,8 @@ pub fn quality_options(selected: &str) -> Markup {
         ("sky", "沉浸环绕声"),
         ("jyeffect", "高清环绕声"),
         ("jymaster", "超清母带"),
-        ("dolby", "杜比全景声"),
+        // 杜比全景声 = av3a（Audio Vivid 12ch），浏览器无解码器、不可在线试听，仅供下载
+        ("dolby", "杜比全景声 · 下载专用"),
     ];
     render_options(OPTS, selected)
 }
@@ -63,7 +64,7 @@ pub fn quality_options_short(selected: &str) -> Markup {
         ("sky", "沉浸环绕声"),
         ("jyeffect", "高清环绕声"),
         ("jymaster", "超清母带"),
-        ("dolby", "杜比全景声"),
+        ("dolby", "杜比全景声·下载专用"),
     ];
     render_options(OPTS, selected)
 }

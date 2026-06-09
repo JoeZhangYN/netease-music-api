@@ -238,6 +238,22 @@ fn determine_extension_defaults_to_mp3() {
     assert_eq!(determine_file_extension("", "ogg"), ".mp3");
 }
 
+#[test]
+fn determine_extension_av3a_dolby_is_mp4_not_mp3() {
+    // 杜比全景声 av3a：MP4 容器，必须命名 .mp4 而非误判 .mp3（旧 bug）。
+    assert_eq!(
+        determine_file_extension(
+            "http://m701.music.126.net/x/jd-audio-vivid/y.mp4?vuutv=z",
+            ""
+        ),
+        ".mp4"
+    );
+    assert_eq!(
+        determine_file_extension("https://cdn.com/file", "av3a"),
+        ".mp4"
+    );
+}
+
 // --- build_file_path ---
 
 #[test]

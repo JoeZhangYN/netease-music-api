@@ -486,13 +486,28 @@
 
             // APlayer 初始化（持久 #aplayer，htmx 不碰它 → `.aplayer` 类不被抹）
             if (playerSec) playerSec.classList.remove('area-hidden');
+            // 杜比全景声(d.type==='av3a')浏览器无解码器 → 改用同源 /stream 取可播档(无损)预览；
+            // 其余 mp3/flac 档（含沉浸环绕声 6ch / 高清环绕声 96k / 超清母带 192k）浏览器能直接播 d.url。
+            var isAv3a = (d.type === 'av3a');
+            var playUrl = isAv3a
+                ? ('/stream/' + encodeURIComponent(d.id) + '?level=lossless')
+                : d.url;
+            var note = document.getElementById('player-note');
+            if (note) {
+                if (isAv3a) {
+                    note.textContent = '杜比全景声(av3a)无法网页在线试听，已自动用无损试听；下载为全景声原档，请用网易云 App 或支持全景声的设备播放。';
+                    note.classList.remove('area-hidden');
+                } else {
+                    note.classList.add('area-hidden');
+                }
+            }
             if (_apInstance) { try { _apInstance.destroy(); } catch (e) {} _apInstance = null; }
             var apEl = document.getElementById('aplayer');
             if (apEl) {
                 apEl.innerHTML = '';
                 _apInstance = new APlayer({
                     container: apEl, lrcType: 1,
-                    audio: [{ name: d.name, artist: d.ar_name, url: d.url, cover: d.pic, lrc: lrc }]
+                    audio: [{ name: d.name, artist: d.ar_name, url: playUrl, cover: d.pic, lrc: lrc }]
                 });
                 // 重置拖拽留下的 inline style
                 var apDiv = document.querySelector('.player-section .aplayer');
