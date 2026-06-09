@@ -37,36 +37,54 @@ pub fn empty_or_error_li(msg: &str) -> Markup {
     }
 }
 
-/// 音质 `<option>` 列表（长标签：parse / download 选择器用）。
-/// 原 4 处硬编码同款；Phase 4 将改由 `/admin/qualities` 单源驱动（不变量 E）。
+/// 音质 `<option>` 列表，按**浏览器可播性**分 3 组 `<optgroup>`（长标签：parse / download 用）。
+/// 分类依实测编码：① 双声道立体声(mp3/flac 2ch) 可在线试听；② 多声道环绕(sky=flac 6ch)
+/// 可试听(浏览器下混立体声)；③ 杜比全景声(av3a 12ch) 浏览器无解码器、仅下载。
+/// 注：高清环绕声/超清母带名字带「环绕/母带」但实为 2ch FLAC，归立体声组。
+/// premium 仍不参与自动降级（不变量 #14，依赖网易云内部降级）。
 pub fn quality_options(selected: &str) -> Markup {
-    const OPTS: &[(&str, &str)] = &[
-        ("standard", "标准音质"),
-        ("exhigh", "极高音质"),
-        ("lossless", "无损音质"),
-        ("hires", "Hi-Res"),
-        ("sky", "沉浸环绕声"),
-        ("jyeffect", "高清环绕声"),
-        ("jymaster", "超清母带"),
-        // 杜比全景声 = av3a（Audio Vivid 12ch），浏览器无解码器、不可在线试听，仅供下载
-        ("dolby", "杜比全景声 · 下载专用"),
+    const GROUPS: &[(&str, &[(&str, &str)])] = &[
+        (
+            "双声道立体声 · 可在线试听",
+            &[
+                ("standard", "标准 · 128k mp3"),
+                ("exhigh", "极高 · 320k mp3"),
+                ("lossless", "无损 · FLAC"),
+                ("hires", "Hi-Res · 24bit FLAC"),
+                ("jyeffect", "高清环绕声 · FLAC 96k"),
+                ("jymaster", "超清母带 · FLAC 192k"),
+            ],
+        ),
+        (
+            "多声道环绕 5.1 · 可试听(下混立体声)",
+            &[("sky", "沉浸环绕声 · FLAC 6ch")],
+        ),
+        (
+            "全景声 12ch · 需专门播放器(仅下载)",
+            &[("dolby", "杜比全景声 · av3a")],
+        ),
     ];
-    render_options(OPTS, selected)
+    render_grouped_options(GROUPS, selected)
 }
 
-/// 音质 `<option>` 列表（短标签：歌单 / 专辑选择器用）。
+/// 音质 `<option>` 列表（短标签：歌单 / 专辑选择器用），同 3 组 `<optgroup>` 分类。
 pub fn quality_options_short(selected: &str) -> Markup {
-    const OPTS: &[(&str, &str)] = &[
-        ("standard", "标准"),
-        ("exhigh", "极高"),
-        ("lossless", "无损"),
-        ("hires", "Hi-Res"),
-        ("sky", "沉浸环绕声"),
-        ("jyeffect", "高清环绕声"),
-        ("jymaster", "超清母带"),
-        ("dolby", "杜比全景声·下载专用"),
+    const GROUPS: &[(&str, &[(&str, &str)])] = &[
+        (
+            "立体声 · 可试听",
+            &[
+                ("standard", "标准"),
+                ("exhigh", "极高"),
+                ("lossless", "无损"),
+                ("hires", "Hi-Res"),
+                ("jyeffect", "高清环绕声"),
+                ("jymaster", "超清母带"),
+            ],
+        ),
+        ("多声道环绕 · 可试听", &[("sky", "沉浸环绕声")]),
+        ("需专门播放器 · 仅下载", &[("dolby", "杜比全景声")]),
     ];
-    render_options(OPTS, selected)
+    render_grouped_options(GROUPS, selected)
 }
 
 /// 统计栏内部（`#stats-bar` 的 innerHTML）—— htmx 轮询 `/ui/stats` 每 3s 替换。
@@ -88,13 +106,17 @@ pub fn stats_bar(s: &StatsVM) -> Markup {
     }
 }
 
-fn render_options(opts: &[(&str, &str)], selected: &str) -> Markup {
+fn render_grouped_options(groups: &[(&str, &[(&str, &str)])], selected: &str) -> Markup {
     html! {
-        @for (val, label) in opts {
-            @if *val == selected {
-                option value=(val) selected { (label) }
-            } @else {
-                option value=(val) { (label) }
+        @for (group_label, opts) in groups {
+            optgroup label=(group_label) {
+                @for (val, label) in *opts {
+                    @if *val == selected {
+                        option value=(val) selected { (label) }
+                    } @else {
+                        option value=(val) { (label) }
+                    }
+                }
             }
         }
     }
