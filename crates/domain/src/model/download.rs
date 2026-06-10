@@ -15,7 +15,9 @@ use super::music_info::MusicInfo;
 /// URL refresh in PR-8, `Network` triggers backoff retry,
 /// `DiskFull` is fail-fast). Coarse-grained `From<DownloadError> for
 /// AppError` collapses these for HTTP boundary status mapping.
-#[derive(Debug, thiserror::Error)]
+// PR-R1: 加 Clone/PartialEq/Eq——续传 FSM 的 `ResumeState::Failed(DownloadError)`
+// 需 derive 这三者断言状态相等（plan §1.2）。变体仅含 u16/u64/String，机械安全。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DownloadError {
     #[error("URL expired (HTTP {status})")]
     UrlExpired { status: u16 },

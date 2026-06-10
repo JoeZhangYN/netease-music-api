@@ -21,10 +21,13 @@ use netease_kernel::runtime_config::RuntimeConfig;
 use crate::download::in_flight::InFlightRegistry;
 use crate::http::{make_client, ClientProfile};
 
+mod job;
+mod manifest;
 mod ranged;
 mod single_stream;
 mod wrapper;
 
+pub use manifest::PartManifest;
 pub use wrapper::{download_file_ranged, download_music_file, download_music_with_metadata};
 
 // PR-C: RETRY_DELAYS_MS 别名已删除。退避表唯一 SOT 在

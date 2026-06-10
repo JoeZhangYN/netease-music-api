@@ -45,6 +45,28 @@ impl HttpFailureKind {
         }
     }
 
+    /// PR-R1 §5.2：是否属于「换条新链接可能解决」的失效（→ FSM refresh 而非直接 fail）。
+    ///
+    /// 与 `is_retryable()` **正交**：`is_retryable=false` 但 `is_url_refreshable=true`
+    /// 的错（403/404/410/AuthExpired）不该被 `with_retry` 反复打（旧 url 必失败 = AP-003），
+    /// 而该升级到 refresh 取新 url 续传。
+    ///
+    /// 非链接 4xx（400/405/416 等）**不**在内——它们换链接也无解（400 Bad Range /
+    /// 416 Range Not Satisfiable），归致命快速失败（不变量 #20）。
+    ///
+    /// 穷尽 match → 新增 `HttpFailureKind` 变体编译期强制此处决策（铁律 4 反退化）。
+    pub const fn is_url_refreshable(&self) -> bool {
+        match self {
+            HttpFailureKind::AuthExpired => true,
+            // 链接过期典型码；400/405/416 等非链接 4xx 不在内（→ 致命快速失败 #20）。
+            HttpFailureKind::Permanent4xx { status } => matches!(status, 403 | 404 | 410),
+            HttpFailureKind::Network(_)
+            | HttpFailureKind::Timeout
+            | HttpFailureKind::Server5xx { .. }
+            | HttpFailureKind::Quota { .. } => false,
+        }
+    }
+
     /// 返回建议的等待时长（仅 Quota 给出 retry_after）。
     pub const fn retry_after(&self) -> Option<Duration> {
         match self {
@@ -140,6 +162,42 @@ mod tests {
         assert!(HttpFailureKind::Quota { retry_after: None }.is_retryable());
         assert!(!HttpFailureKind::AuthExpired.is_retryable());
         assert!(!HttpFailureKind::Permanent4xx { status: 404 }.is_retryable());
+    }
+
+    // PR-R1 §5.2 — is_url_refreshable 与 is_retryable 二元组穷举。
+    // 每个变体断言 (is_retryable, is_url_refreshable)，防 416/400/405 误归 refreshable。
+    #[test]
+    fn is_url_refreshable_orthogonal_to_retryable() {
+        // (kind, expected_is_retryable, expected_is_url_refreshable)
+        let cases: &[(HttpFailureKind, bool, bool)] = &[
+            // 网络瞬态：retryable，不 refresh（换链接无意义，with_retry 处理）
+            (HttpFailureKind::Network("x".into()), true, false),
+            (HttpFailureKind::Timeout, true, false),
+            (HttpFailureKind::Server5xx { status: 503 }, true, false),
+            (HttpFailureKind::Quota { retry_after: None }, true, false),
+            // 链接级失效：不 retryable（旧 url 必失败 = AP-003），但 refresh 可解
+            (HttpFailureKind::AuthExpired, false, true),
+            (HttpFailureKind::Permanent4xx { status: 403 }, false, true),
+            (HttpFailureKind::Permanent4xx { status: 404 }, false, true),
+            (HttpFailureKind::Permanent4xx { status: 410 }, false, true),
+            // 非链接 4xx：不 retryable，也**不** refresh（致命快速失败 #20）
+            (HttpFailureKind::Permanent4xx { status: 400 }, false, false),
+            (HttpFailureKind::Permanent4xx { status: 405 }, false, false),
+            (HttpFailureKind::Permanent4xx { status: 416 }, false, false),
+            (HttpFailureKind::Permanent4xx { status: 451 }, false, false),
+        ];
+        for (kind, want_retry, want_refresh) in cases {
+            assert_eq!(
+                kind.is_retryable(),
+                *want_retry,
+                "{kind:?} is_retryable mismatch"
+            );
+            assert_eq!(
+                kind.is_url_refreshable(),
+                *want_refresh,
+                "{kind:?} is_url_refreshable mismatch"
+            );
+        }
     }
 
     #[test]
