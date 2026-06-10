@@ -114,6 +114,8 @@ wiremock = "0.6"
 tokio-test = "0.4"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "form", "stream", "rustls-no-provider"] }
+# PR-R4: 续传 refresh 回归测试需 impl UrlRefresher（#[async_trait] trait）的 mock。
+async-trait = "0.1"
 
 [profile.release]
 opt-level = 3

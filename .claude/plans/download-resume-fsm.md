@@ -524,3 +524,29 @@ struct PartManifest {
 - `docs/guides/download-link-state-machine.md`：补 Job 层续传/refresh 环。
 - `docs/contracts/download-link.contract.md`：可补 C-7「续传只持久化字节态非 URL」。
 - `references/infra-download.md` + `ARCHITECTURE.md` 映射表。
+
+---
+
+## Errata（落地偏离记录）
+
+> 落地（PR-R1~R5）相对本设计文档的偏离，逐条记录 + 标批准状态。本节由 R5 回写（team-lead
+> 给定 R4 的 5 条偏离），SOT 文档（CLAUDE.md / references / contract）已按**落地实际**对齐，
+> 本节解释「为何与上文设计描述不同」，便于后人对照设计意图与最终实现。
+
+1. **`UrlRefresher::refresh(&self)` 无参化**（偏离 §2.3 的 `refresh(&self, song_id, quality, cookies)`
+   显式参数表）—— impl `MusicApiRefresher` 是 **per-song 有状态**实例，song_id/quality/cookies
+   收进构造时的内部状态（cookies 取快照，单 Job 生命周期一致）。driver 不碰这些参数，只调
+   `refresh()`。一个 refresher 实例 = 绑定「某首歌当前生效 quality」的完整 refresh 能力（§4.1
+   对应轴的更内聚形态）。**已批准**。
+2. **refresher 经 `DownloadConfig.refresher: Option<Arc<dyn UrlRefresher>>` 注入**（偏离 §2.4
+   `run_download_job(..., refresher: &dyn UrlRefresher, ...)` 显式参数）—— 收进 `DownloadConfig`
+   走 #11 单源注入，避免 download_file_ranged → run_download_job 调用链多穿一个参数；`None` /
+   `resume_enabled=false` 退化现状。手写 Debug 防 URL 入日志（AP-004）。**已批准**。
+3. **`download_attempt_from` 折进既有两函数**（偏离 §2.4 新建独立 `download_attempt_from` 原语）——
+   实际抽成 `job.rs::attempt_once`（按阈值分派 ranged/single_stream），续传起点由被调函数内部从
+   `.part`/manifest 自读（R2/R3），driver 不显式传 offset。语义等价、少一个公开符号。**已批准**。
+4. **single_stream typed 状态分类是 R4 补的（R2 漏）**—— R2 的 single_stream 链接级 4xx 原被
+   `classify` 吞成 `Network`（瞬态）无法触发 refresh；R4 升 single_stream 返回 `HttpFailureKind`
+   typed 分类，链接级失效正确暴露给 FSM。属 R2 范围内的潜在漏，R4 一并修。**已批准**。
+5. **`DownloadError` 补 `Clone`/`PartialEq`/`Eq`**（§1.2 未显式声明 derive）—— `ResumeState::Failed(DownloadError)`
+   需 derive 这三者以支持 FSM 状态相等断言（测试）。变体仅含 u16/u64/String，机械安全。**已批准**。

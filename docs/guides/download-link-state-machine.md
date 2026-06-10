@@ -117,9 +117,55 @@
 
 ### Failed（失败）
 
-- **进入条件**：5 次重试全部失败
+- **进入条件**：5 次重试全部失败（瞬态网络层）**且**不属于「链接级失效」，或 refresh 预算耗尽
 - **必须操作**：丢弃当前 URL，从 Discovered 重新开始
 - **禁止操作**：用同一 URL 在外层再次尝试
+
+## 续传 Job 层（R4 FSM：`Downloading ⇄ Refreshing` 环）
+
+链接层的 `Consuming → Failed → 丢弃 URL 重取` 在 v4 断点续传里被细化为一个**有界循环 FSM**
+（`crates/infra/src/download/engine/job.rs::run_download_job`，enum `ResumeState` + 穷尽 match）。
+核心破题点：续传**只持久化字节偏移 + 元信息，绝不持久化 URL**——每次续传都经 `UrlRefresher`
+重新 `get_song_url()` 取**全新 URL**，再对新 URL 发 `Range: bytes=<offset>-` 的 GET（对新 URL 的
+Range GET = 契约定义的「一次消耗」，合法；见 download-link.contract.md C-7）。
+
+```
+              UrlObtained{resume_from}        EnterDownload
+   ┌──────┐ ───────────────────────→ ┌───────┐ ──────────→ ┌─────────────┐
+   │ Init │                          │ Ready │             │ Downloading │
+   └──────┘                          └───────┘             └─────────────┘
+                                         ▲                  │    │    │
+                          SizeMismatch   │                  │    │    │ AttemptCompleted
+                       (丢弃 .part 重来) │      RefreshSucceeded   │    └──────────────→ ┌───────────┐
+                                         │      {resume_from}  │                        │ Assembled │ (终态→rename)
+                                    ┌──────────┐ ←────────────┘                        └───────────┘
+   AttemptUrlExpired{written}       │Refreshing│
+   （403/404/410/AuthExpired,       │{written, │  RefreshBudgetExhausted        AttemptFatal
+    is_url_refreshable）───────────→│ used}    │ ──────────────────────→ ┌────────┐ ←─── (DiskFull/Cancelled/
+                                    └──────────┘                         │ Failed │      非链接 4xx，快速失败 #20)
+                                         │ refresher.refresh() Err        └────────┘
+                                         └────────────────────────────────────┘
+```
+
+- **per-attempt vs per-job 两层正交（不重叠）**：
+  - per-attempt 网络瞬态重试（`Network`/`Timeout`/`5xx`/short read）仍在 `attempt_once` 内的
+    `with_retry`（不变量 #17/#21），FSM **不插手**。
+  - per-job 链接级失效（`is_url_refreshable`：403/404/410/AuthExpired）→ FSM 升级到 `Refreshing`，
+    **有界** refresh（`url_refresh_budget` 默认 2）取新 URL 后从 `.part` 偏移续传。
+  - 总 CDN/refresh 请求 ≤ `(url_refresh_budget + 1) × max_attempts`（不变量 #23，杜绝相乘放大风控）。
+- **致命错快速失败**（不变量 #20）：非链接 4xx（400/405/416）、`DiskFull`(507)、`Cancelled`(499)
+  → `AttemptFatal` → `Failed`，**不** refresh。
+- **#14 完整性**：refresh 后 `RefreshedUrl.file_size != expected_len`（取到不同 quality/编码）→
+  `SizeMismatch` → 丢弃 `.part` 回 `Ready{resume_from:0}` 全量重来（refresh pin 到 `.part` 实际 quality，
+  premium 不重跑 ladder）。
+- **退化逃生口**：`resume_enabled == false` 或 `refresher == None` → driver 退化为单次 `attempt_once`
+  （现状行为，链接过期即失败）。
+- **in-flight 不变量 #8**：refresh 环内嵌于 `download_file_ranged`（方案 A），复用其 `InFlightGuard`——
+  guard 横跨整个 Job（含 refresh 周期），refresh 间隙引用计数恒 ≥1，`.part` 不被 disk_guard 误删。
+
+> 字节态载体（不变量 #22）：single_stream = `.part` 文件长度（顺序 append）；ranged = sidecar
+> `<part>.json` `PartManifest`（稀疏 pwrite 的已填闭区间）。写序严格 ① pwrite → ② flush →
+> ③ record+persist（manifest 永远落后真实字节，崩溃安全重下）。
 
 ## 任务层状态详解
 

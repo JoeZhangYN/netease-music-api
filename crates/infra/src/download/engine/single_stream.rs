@@ -200,6 +200,9 @@ async fn stream_resp_to_file_inner(
             .map_err(|e| AppError::Download(format!("Open .part for append failed: {e}")))?
     } else {
         // 全新 / 降级全量：截断创建。
+        // resume-truncate-gate: exempt — 唯一合法首次创建站点（resume_offset==0：全新下载
+        // 或 ranged 200 降级），续传分支（resume_offset>0）走上方 append 不截断。反退化锁
+        // tests/no_truncate_in_resume_primitives.rs 禁此外的 File::create/truncate(true) 复活。
         tokio::fs::File::create(file_path)
             .await
             .map_err(|e| AppError::Download(format!("Create file failed: {e}")))?

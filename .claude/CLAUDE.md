@@ -1,21 +1,23 @@
 # Netease Cloud Music API
 
 Rust/Axum 重写的网易云音乐解析/下载服务，DDD + 六边形架构。
-v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + 类型驱动基础设施铺设；
-**FSM / typestate / DownloadOutcome 等核心类型设计 deferred 到 v4**——见 CHANGELOG.md "Deferred to v4"。
+v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + 类型驱动基础设施铺设。
+v4 断点续传（PR-R1~R5 完成）：`DownloadJob FSM with UrlRefresher + Range resume from .part`
+已 landed——`.part`/sidecar manifest 续传字节态 + 链接过期有界 refresh 续传（不变量 #1/#8/#20/#22/#23，
+施工图 `.claude/plans/download-resume-fsm.md`）。剩余 typestate `DownloadUrl::consume` 线性消耗仍 deferred。
 
 ## v3 关键不变量（PR 1-13 后立的护栏，**本表为 SOT**——CHANGELOG 段反向引用此表行号）
 
 | # | 不变量 | 由什么强制 | 反模式见 |
 |---|--------|----------|---------|
-| 1 | 下载文件原子性 | `engine/wrapper.rs` `.part` staging + atomic rename | `cached_size > 0` (pre-PR-3) |
+| 1 | 下载文件原子性 + `.part` 续传 substrate | `engine/wrapper.rs` `.part` staging + atomic rename；`.part` 从「临时缓冲」升级为「续传 substrate」(R2/R3)——失败留盘、重试复用，rename 成功后删 `<part>.json` sidecar | `cached_size > 0` (pre-PR-3)；失败即 `truncate(true)`/`File::create` 抹盘整文件重来 (pre-R2/R3，反退化锁见 #22) |
 | 2 | HTTP 错误码识别 | `engine/single_stream.rs` status guard (PR-5) | reqwest 不 Err on 5xx |
 | 3 | Quality 域封闭 | `enum Quality` exhaustive match (PR-4) | `info.rs` 漏 `dolby` |
 | 4 | SongId 非零 | `NonZeroI64` newtype (PR-7) | `.unwrap_or(0)` 哨兵 |
 | 5 | 信号量 / stats 配对 | `helpers::PermitGuard` RAII Drop (PR-9) | panic 漏 decrement |
 | 6 | 临时 ZIP 60s 自清 | `helpers::TempZipHandle` Drop (PR-9) | 4 处散布 spawn-sleep |
 | 7 | 错误 → HTTP 状态 | `helpers::AppErrorResponse` `IntoResponse` (PR-9) | 17 处 `format!("xxx 失败")` |
-| 8 | 下载中 `.part` 不被驱逐（真 in-flight registry 主防线 + mtime 宽限兜底） | `in_flight::InFlightRegistry` 引用计数 RAII guard（`engine/wrapper.rs` **Job 入口**登记 `download_music_file`/`download_music_with_metadata`，guard 跨重试/刷新计数恒 ≥1 不断开）→ `disk_guard::select_evictions` 跳过 `snapshot()` 路径 (v4)；mtime 5min 宽限 (PR-11/13) 降为第二道防线 | long stall > grace 仍误删活跃 `.part`（pre-registry mtime-only）；**attempt 粒度登记** refresh 间隙漏注册被误删（Task #5 FSM 硬约束规避）|
+| 8 | 下载中 `.part` 不被驱逐（真 in-flight registry 主防线 + mtime 宽限兜底） | `in_flight::InFlightRegistry` 引用计数 RAII guard（`engine/wrapper.rs` **Job 入口**登记 `download_music_file`/`download_music_with_metadata`，guard 跨重试/刷新计数恒 ≥1 不断开）→ `disk_guard::select_evictions` 跳过 `snapshot()` 路径 (v4)；mtime 5min 宽限 (PR-11/13) 降为第二道防线。**R4 FSM 落地（方案 A）**：`run_download_job` 的 `Downloading⇄Refreshing` refresh 环内嵌于 `download_file_ranged`，复用其 `_attempt_guard`——guard 天然横跨整个 Job（含 refresh 周期），refresh 间隙引用计数恒 ≥1 不断开 | long stall > grace 仍误删活跃 `.part`（pre-registry mtime-only）；**attempt 粒度登记** refresh 间隙漏注册被误删（R4 方案 A 规避——guard 横跨 refresh 环）|
 | 9 | Slider 边界单源 | `GET /admin/config/schema` (PR-10) | HTML/JS/Rust 三处漂移 |
 | 10 | Quality 列表单源 | `GET /admin/qualities` (PR-10) | HTML 4 select 硬编码 |
 | 11 | DownloadConfig 字段映射单源 | `DownloadConfig::from_runtime_config` (PR-13) | handler 5 处字段-by-字段构造 |
@@ -27,8 +29,10 @@ v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + �
 | 17 | 退避表 SOT 单源 | `crate::http::DEFAULT_BACKOFF` + `with_retry` (PR-A/C/E) | engine + client.rs 两份不一致 RETRY_DELAYS_MS |
 | 18 | 下载侧 CDN 速率护栏 | handler `state.rate_limiter.acquire(host="cdn", user)` (PR-E) | 仅 download_semaphore=2，CDN 高频可能触发限速 |
 | 19 | HTTP 200 + 网易云风控 body code 在 HTTP 层 peek 识别 | `client.rs::request_with_retry` 200 路径调 `HttpFailureKind::from_response_body_200` (PR-K E1) | -460/-461/-301 错过 with_retry 退避（v3.0.x 偶发解析失败核心根因）|
-| 20 | `fetch_range` 永久错快速失败 | `ranged.rs::fetch_range` 返 `HttpFailureKind`，4xx 通过 `from_response` 不重试 (PR-K A) | 4xx 被错当 short read 反复重试 5 次（v3.0.x "卡 90%" chunk 失败根因）|
+| 20 | `fetch_range` 永久错快速失败；链接级 4xx 升级有界 refresh（非旧 url 重试） | `ranged.rs::fetch_range` 返 `HttpFailureKind`，4xx 通过 `from_response` 不重试 (PR-K A)；**非链接 4xx（400/405/416）仍快速失败**，**链接级失效（403/404/410/AuthExpired，`is_url_refreshable`）+ 预算尚存 → FSM `run_download_job` 升级到 refresh 取新 url 续传 (R4)**——仍不是「用旧 url 重试」(AP-003 合规) | 4xx 被错当 short read 反复重试 5 次（v3.0.x "卡 90%" chunk 失败根因）；链接过期单次即报错不 refresh (pre-R4) |
 | 21 | `RetryPolicy` SOT 单源 | `policy.rs::for_profile_with_max_retries` 唯一 ctor (PR-K B)；下载侧 ranged/single_stream 真消费 `config.max_retries`，admin UI 实时生效 (PR-K2) | 4 套独立退避数学（policy/ranged/single_stream 不一致）；声称 SOT 但 default_for_profile 忽略 config |
+| 22 | 续传字节态 SOT + 写序不变量（manifest 永远落后真实字节） | single_stream 字节态 = `.part` 文件长度（顺序 append，R2）；ranged 字节态 = `<part>.json` sidecar `PartManifest`（稀疏 pwrite，R3）。**严格写序（崩溃一致性核心）**：① pwrite chunk → ② flush → ③ `record_chunk`+`persist`（原子 temp+rename），绝不反序——崩溃在 ①②③ 间 manifest 缺记已写 chunk → resume 安全重下（幂等）。续写原语禁无条件截断（`truncate(true)`/`File::create`），反退化锁 `crates/infra/tests/no_truncate_in_resume_primitives.rs` | manifest 超前于真实字节（先记后写）→「以为写了其实没写」损坏；失败 `truncate` 抹盘整文件重来 (pre-R2/R3) |
+| 23 | refresh 有界预算 + 总请求上界 | FSM driver `job.rs::run_download_job` 持 `url_refresh_budget`（`RuntimeConfig`，默认 2，validate 0..=10）；per-attempt 网络重试（`with_retry` #17/#21）与 per-job refresh 预算**正交**，总 CDN/refresh 请求 ≤ `(url_refresh_budget+1) × max_attempts`（regression `refresh_budget_bounds_total_requests` 断言） | refresh × retry 相乘放大风控（无界 refresh 击穿 #18 CDN 护栏）|
 
 ## 快速定位
 
@@ -75,10 +79,12 @@ v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + �
 - `AppState` (`crates/adapter/src/web/state.rs`) — 全局共享状态，含 3 信号量 + DashMap + RuntimeConfig + 管理会话
 - `MusicApi` trait (`crates/domain/src/port/music_api.rs`) — 网易云 API 抽象 (6 async 方法)
 - `TaskStore` trait (`crates/domain/src/port/task_store.rs`) — 异步任务存储
+- `UrlRefresher` trait (`crates/domain/src/port/url_refresher.rs`) — 续传 URL 刷新端口 (R4, per-song 有状态 `refresh(&self)`，impl `infra/download/refresher.rs`)
 - `MusicInfo` (`crates/domain/src/model/music_info.rs`) — 歌曲元数据值对象 (13 字段)
 - `AppConfig` (`crates/kernel/src/config.rs`) — 环境变量配置 (含 admin_hash_file, runtime_config_file)
-- `RuntimeConfig` (`crates/kernel/src/runtime_config.rs`) — 运行时可调配置 (16 字段, JSON 持久化)
-- `DownloadConfig` (`crates/infra/src/download/engine.rs`) — 下载引擎参数 (从 RuntimeConfig 构建)
+- `RuntimeConfig` (`crates/kernel/src/runtime_config.rs`) — 运行时可调配置 (JSON 持久化；R4 加 `resume_enabled`/`url_refresh_budget`)
+- `DownloadConfig` (`crates/infra/src/download/engine/mod.rs`) — 下载引擎参数 (从 RuntimeConfig 构建；R4 加 `resume_enabled`/`url_refresh_budget`/`refresher: Option<Arc<dyn UrlRefresher>>`)
+- `PartManifest` (`crates/infra/src/download/engine/manifest.rs`) — ranged 续传字节态 sidecar (`<part>.json`，R1/R3，不变量 #22)
 
 ## 管理面板
 

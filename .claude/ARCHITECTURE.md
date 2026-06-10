@@ -27,6 +27,7 @@ adapter/web  →  domain/service  →  domain/port (trait)
 | `crates/domain/src/port/cookie_store.rs` | CookieStore trait |
 | `crates/domain/src/port/stats_store.rs` | StatsStore trait |
 | `crates/domain/src/port/task_store.rs` | TaskStore trait (create/get/update/remove/cleanup) |
+| `crates/domain/src/port/url_refresher.rs` | UrlRefresher trait (续传 URL 刷新端口, R4, per-song refresh(&self)) |
 | `crates/domain/src/service/song_service.rs` | 单曲解析编排 |
 | `crates/domain/src/service/search_service.rs` | 搜索编排 |
 | `crates/domain/src/service/playlist_service.rs` | 歌单编排 |
@@ -46,10 +47,15 @@ adapter/web  →  domain/service  →  domain/port (trait)
 | `crates/infra/src/persistence/cookie_file.rs` | FileCookieStore (impl CookieStore) |
 | `crates/infra/src/persistence/stats_file.rs` | FileStatsStore (impl StatsStore) + SSE 推送 |
 | `crates/infra/src/persistence/task_memory.rs` | InMemoryTaskStore (impl TaskStore) + 定期清理 |
-| `crates/infra/src/download/engine.rs` | 下载引擎 (DownloadConfig, download_file_ranged, download_music_file, download_music_with_metadata) |
+| `crates/infra/src/download/engine/` (split PR-8) | 下载引擎 (DownloadConfig, download_file_ranged, download_music_file, download_music_with_metadata) |
+| `crates/infra/src/download/engine/job.rs` | 续传 Job FSM (ResumeState enum + run_download_job driver, R1/R4) |
+| `crates/infra/src/download/engine/manifest.rs` | ranged 续传字节态 sidecar PartManifest (R1/R3, 不变量 #22) |
+| `crates/infra/src/download/engine/{ranged,single_stream,wrapper}.rs` | Range 分段 / 流式续写 / 高层入口 |
+| `crates/infra/src/download/refresher.rs` | MusicApiRefresher (impl UrlRefresher, per-song pin quality, R4) |
+| `crates/infra/src/download/in_flight.rs` | 真 in-flight .part registry (不变量 #8, RAII guard) |
 | `crates/infra/src/download/tags.rs` | 音频标签写入 (lofty) |
 | `crates/infra/src/download/zip.rs` | ZIP 打包 (build_zip_buffer, TrackData) |
-| `crates/infra/src/download/disk_guard.rs` | 磁盘空间检查 (ensure_disk_space) |
+| `crates/infra/src/download/disk_guard/` | 磁盘空间检查 (ensure_disk_space; select.rs 纯决策 + mod.rs IO) |
 | `crates/infra/src/cache/cover_cache.rs` | CoverCache (封面图内存缓存, 运行时可调 TTL/大小) |
 | `crates/infra/src/auth/password.rs` | 管理员密码 (bcrypt 哈希/验证/文件读写) |
 | `crates/infra/src/extract_id.rs` | 从 URL/ID 字符串提取音乐 ID |
@@ -109,8 +115,9 @@ adapter/web  →  domain/service  →  domain/port (trait)
 | `extract_music_id` | `crates/infra/src/extract_id.rs` | URL/ID 统一提取 |
 | `build_file_path` | `crates/domain/src/model/music_info.rs` | 构建下载文件路径 |
 | `get_music_info` | `crates/domain/src/service/download_service.rs` | 获取完整歌曲信息 (detail + url + lyric) |
-| `download_file_ranged` | `crates/infra/src/download/engine.rs` | Range 断点下载 (5 次重试, 指数退避) |
-| `download_client` | `crates/infra/src/download/engine.rs` | 下载专用 HTTP 客户端 (connect 10s / read 60s) |
+| `download_file_ranged` | `crates/infra/src/download/engine/wrapper.rs` | 内嵌续传 FSM driver + atomic rename (5 次重试 + 链接过期有界 refresh) |
+| `run_download_job` | `crates/infra/src/download/engine/job.rs` | 续传 Job FSM driver (Downloading⇄Refreshing 环, R4) |
+| `download_client` | `crates/infra/src/download/engine/mod.rs` | 下载专用 HTTP 客户端 (connect 10s / read 60s) |
 | `write_music_tags` | `crates/infra/src/download/tags.rs` | 写入音频标签 (ID3v2/Vorbis/Mp4) |
 | `build_zip_buffer` | `crates/infra/src/download/zip.rs` | 打包 ZIP (音频+封面+歌词) |
 | `write_tags_with_retry` | `crates/adapter/src/web/handler/download_batch.rs` | 标签写入重试 + 验证 |

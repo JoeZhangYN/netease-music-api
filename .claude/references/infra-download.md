@@ -6,7 +6,13 @@
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| engine/ (split PR-8) | — | 下载引擎 (DownloadConfig + 断点续传 + 重试) |
+| engine/ (split PR-8) | — | 下载引擎 (DownloadConfig + 断点续传 FSM + 重试) |
+| engine/job.rs | — | 续传 Job FSM (`ResumeState` enum + `run_download_job` driver, R1/R4, 不变量 #20/#23) |
+| engine/manifest.rs | — | ranged 续传字节态 sidecar `PartManifest` (`<part>.json`, R1/R3, 不变量 #22) |
+| engine/ranged.rs | — | Range probe + 并发 chunk pwrite + manifest 驱动跳已填 range (R3) |
+| engine/single_stream.rs | — | 非 ranged 流式下载 + `.part` 长度字节续传 (R2) |
+| engine/wrapper.rs | — | 高层入口 (`download_file_ranged` 内嵌 FSM driver + atomic rename + sidecar 清理) |
+| refresher.rs | — | `UrlRefresher` impl `MusicApiRefresher` (per-song 有状态, pin quality 禁 ladder #14, R4) |
 | in_flight.rs | — | 真 in-flight `.part` registry (不变量 #8, RAII guard) |
 | tags.rs | 74 | 音频标签写入 (lofty) |
 | zip.rs | 130 | ZIP 打包 (去重文件名, 支持文件/内存) |
@@ -24,9 +30,13 @@ pub struct DownloadConfig {
     pub min_free_disk: u64,           // 500MB, 最低磁盘空间
     pub disk_guard_grace_secs: u64,   // 300, mtime 宽限期 (PR-13)
     pub in_flight: Arc<InFlightRegistry>, // 不变量 #8, 跨下载共享, AppState 注入
+    pub resume_enabled: bool,         // R4, 默认 true; false → driver 退化单次尝试
+    pub url_refresh_budget: u32,      // R4, 默认 2 (validate 0..=10), 不变量 #23
+    pub refresher: Option<Arc<dyn UrlRefresher>>, // R4, None → 退化; 手写 Debug 防 URL 入日志 AP-004
 }
 // from_runtime_config(&rc, state.in_flight.clone()) 单源构造 (不变量 #11);
-// in_flight 不来自 RuntimeConfig, 由 handler 从 AppState Arc 克隆传入
+// in_flight/refresher 不来自 RuntimeConfig, 由 handler 注入 (in_flight 从 AppState Arc 克隆,
+// refresher 每曲构造 MusicApiRefresher); resume_enabled/url_refresh_budget 来自 RuntimeConfig
 
 pub fn download_client() -> &'static Client;
 // 单例: connect_timeout 10s, read_timeout 60s
@@ -39,8 +49,11 @@ pub async fn download_file_ranged(
     on_progress: Option<ProgressCallback>,
     config: &DownloadConfig,
 ) -> Result<(), AppError>;
-// max_retries 次重试, 指数退避 [500,1000,2000,4000,8000]ms
-// 支持 Range 断点续传 + 多段下载
+// 内嵌 FSM driver run_download_job (R4 方案 A): 持 InFlightGuard 横跨整个 Job
+// (含 refresh 环); 成功后 atomic rename + 删 sidecar manifest
+// max_retries 次 per-attempt 网络重试 (with_retry, 指数退避 [500,1000,2000,4000,8000]ms);
+//   链接级失效 → 有界 refresh 续传 (url_refresh_budget, 不变量 #20/#23)
+// 真断点续传: single_stream 按 .part 长度续 (R2) / ranged 按 manifest 跳已填 chunk (R3)
 // content_length_hint 避免 HEAD 请求 (保护一次性链接)
 
 pub async fn download_music_file(
@@ -55,6 +68,45 @@ pub async fn download_music_with_metadata(
 ) -> Result<DownloadResult, AppError>;
 // 带预取元数据的下载 (批量下载主入口)
 ```
+
+## engine/job.rs (续传 FSM, R1/R4)
+
+`ResumeState` enum (Init/Ready/Downloading/Refreshing/Assembled/Failed) + 穷尽 match `advance`
+(纯函数, 非法转换返 `AppError::InvalidTransition`); `run_download_job` driver 编排
+`Downloading ⇄ Refreshing` 环。详见 `docs/guides/download-link-state-machine.md` §续传 Job 层。
+
+```rust
+pub(super) async fn run_download_job(
+    client, initial_url, part_path, content_length, on_progress, config,
+) -> Result<(), AppError>;
+// resume_enabled=false / refresher=None → 退化单次 attempt_once (现状)
+// 链接级失效 (is_url_refreshable) → 有界 refresh (url_refresh_budget); 致命错快速失败 (#20)
+// refresh size 不符 → 丢弃 .part 全量重来 (#14); 总请求 ≤ (budget+1)×max_attempts (#23)
+```
+
+## engine/manifest.rs (ranged 续传字节态, R1/R3, 不变量 #22)
+
+```rust
+pub struct PartManifest { /* schema_version, song_id, quality, content_length, chunk_size, completed: Vec<(u64,u64)> 私有 */ }
+impl PartManifest {
+    pub fn load(&Path) -> io::Result<Option<Self>>;   // 缺失/损坏/未知版本 → Ok(None) 容错
+    pub fn persist(&self, &Path) -> io::Result<()>;    // 原子 temp+rename
+    pub fn record_chunk(&mut self, start, end);        // 合并重叠/相邻闭区间
+    pub fn contiguous_prefix(&self) -> u64;            // [0,prefix) 连续已填
+    pub fn next_missing_range(&self) -> Option<(u64,u64)>;
+    pub fn is_complete(&self) -> bool;
+    pub fn is_range_complete(&self, start, end) -> bool; // 任意区间是否被某已记录区间完整覆盖 (跳离散完成 chunk)
+}
+// 写序不变量: ① pwrite → ② flush → ③ record+persist (manifest 永远落后真实字节, 崩溃安全重下)
+// sidecar 路径 = sidecar_path_for(part_path) = <part>.json (单源)
+```
+
+## refresher.rs (UrlRefresher impl, R4)
+
+`MusicApiRefresher` — per-song 有状态 impl: 构造时绑定 song_id/quality/cookies 快照,
+`refresh(&self)` 内部 `resolve_url_with_fallback` (叠加 #14 ladder 降级 + DownloadUrl 封装),
+回报 `RefreshedUrl { url, file_size, file_type, quality }` 供 #14 size/quality pin 校验。
+手写 Debug 防 URL 入日志 (AP-004)。
 
 ## tags.rs
 

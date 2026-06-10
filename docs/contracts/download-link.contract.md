@@ -150,6 +150,53 @@ POST: task.stage == "retrieved" (不变)
 
 ---
 
+## 契约 C-7: 续传只持久化字节态，绝不持久化 URL
+
+### 规则
+
+断点续传（v4 PR-R1~R5）跨失败/重试/refresh 周期持久化的是**字节偏移 + 文件元信息**
+（content_length / 已填 range / 实际 quality），**绝不持久化下载 URL**。每次续传都经
+`UrlRefresher::refresh()` 重新 `get_song_url()` 取**全新 URL**，再对新 URL 发
+`Range: bytes=<offset>-` 的 GET。对新 URL 的 Range GET 是 C-3 定义的「一次消耗」，合法——
+它与 C-4「失败后 URL 不可复用」一致（refresh 必取新 url，旧 url 丢弃），不是用旧 URL 重试。
+
+### 形式化
+
+```
+PRE:  download 中途失败，.part 已写 N 字节（字节态落盘：single_stream=.part 长度，
+      ranged=<part>.json sidecar PartManifest 的已填闭区间）
+DO:   url_b = refresher.refresh()              // 全新 URL（经 get_song_url，C-1：不碰 CDN）
+      if url_b.file_size != expected: 丢弃 .part 全量重来   // #14 完整性
+      else: GET url_b with `Range: bytes=N-`   // 对新 URL 的一次消耗（C-3 合法）
+POST: 旧 URL 永不复用（C-4）；持久化态中从不含任何 URL
+      重启后由确定性路径（build_file_path → part_path_for）从盘上发现 .part + sidecar
+```
+
+### 禁止的模式
+
+```rust
+// FORBIDDEN: 缓存/持久化 URL 跨续传复用（违反 C-4 + AP-002/AP-003）
+manifest.url = url;  // 绝不！URL 有时效 + 一次性，缓存必失效
+
+// FORBIDDEN: HEAD/Range 预检 .part 是否仍可续（违反 AP-001/AP-006，CDN 可能视为消耗）
+client.head(&url);   // 绝不！直接对新 url 发 Range GET，有效性由响应隐式证明
+
+// CORRECT: 只持久化字节偏移 + 元信息，URL 每次经 refresher 重取
+let offset = part_len_or_manifest_prefix();   // 字节态（本地 fs，无网络）
+let fresh = refresher.refresh().await?;        // 新 URL
+download_range(fresh.url, offset).await;       // 对新 URL 的一次消耗
+```
+
+### 代码定位
+
+- 字节态载体：`crates/infra/src/download/engine/manifest.rs::PartManifest`（ranged sidecar）+
+  single_stream 直接读 `.part` 文件长度。
+- URL 刷新端口：`crates/domain/src/port/url_refresher.rs::UrlRefresher`（impl
+  `crates/infra/src/download/refresher.rs`）。
+- FSM driver：`crates/infra/src/download/engine/job.rs::run_download_job`。
+
+---
+
 ## 不变量总表
 
 | ID | 不变量 | 违反后果 |
@@ -160,3 +207,4 @@ POST: task.stage == "retrieved" (不变)
 | C-4 | 失败后重新获取 | 用失效 URL 无限重试 |
 | C-5 | 去重保证 | 同一 URL 被并行消耗 |
 | C-6 | 结果单次取回 | ZIP 文件提前/重复删除 |
+| C-7 | 续传只持久化字节态非 URL | 缓存失效 URL 续传必失败 / 预检消耗链接 |

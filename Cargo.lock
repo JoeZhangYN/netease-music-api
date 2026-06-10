@@ -1521,6 +1521,7 @@ name = "netease-music-api"
 version = "3.0.4"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "axum",
  "chrono",
  "dashmap",

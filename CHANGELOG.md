@@ -32,9 +32,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   判定为巧合锚/同名异义，维持分立。
 
 ### Added
-- **断点续传 DownloadJob FSM 设计文档（未实现）** `.claude/plans/download-resume-fsm.md` ——
-  enum FSM（Downloading⇄Refreshing 环）+ UrlRefresher port + sidecar manifest + PR R1~R5 切分；
-  关键发现：现有 `.part` 每次 `truncate(true)`/`File::create` 抹盘、**实际不可续传**。
+- **断点续传 DownloadJob FSM 落地（PR-R1~R5，施工图 `.claude/plans/download-resume-fsm.md`）** ——
+  下载中途失败不再整文件重来；链接过期自动 refresh 续传。不变量 #1/#8/#20/#22/#23（CLAUDE.md SOT）。
+  - **R1 纯类型层**：`ResumeState` enum FSM（`Downloading⇄Refreshing` 环 + 穷尽 match 反退化）+
+    `UrlRefresher` outbound port + `PartManifest`（sidecar 字节态）+ `HttpFailureKind::is_url_refreshable`。
+  - **R2 single-stream 字节续传**：`.part` 顺序 append，已写字节数 = 文件长度，按 `Range: bytes=N-`
+    续写（停 `File::create` 无条件截断）。
+  - **R3 ranged chunk 级续传**：sidecar `<part>.json` `PartManifest` 记已填闭区间，按 `next_missing_range`
+    跳已填 chunk（停 `truncate(true)` 抹盘）；严格写序 ① pwrite → ② flush → ③ record+persist（原子，
+    崩溃一致性：manifest 永远落后真实字节）；`is_range_complete` 跳离散完成 chunk（并发部分成功场景）。
+  - **R4 URL refresh 集成**：`job.rs::run_download_job` FSM driver 内嵌 `download_file_ranged`（方案 A，
+    复用 `InFlightGuard` 横跨 refresh 环）；`MusicApiRefresher` per-song 有状态 impl（pin quality 禁 ladder
+    换挡 #14）；有界 refresh 预算（`url_refresh_budget` 默认 2），总请求 ≤ `(budget+1)×max_attempts`；
+    旧 url 失效必取新 url 不复用（AP-003）；refresh size 不符丢弃 `.part` 全量重来（#14）。
+  - **R5 拆桥 + 反退化锁 + 文档收口**：续写原语无条件截断反退化锁
+    `crates/infra/tests/no_truncate_in_resume_primitives.rs`（grep gate + marker 豁免）；SOT 文档同步
+    （CLAUDE.md 不变量表 / 本 CHANGELOG / download-link-state-machine.md / download-link.contract.md C-7 /
+    references / ARCHITECTURE.md）。
+  - regression：`tests/{ranged_resume,refresh_resume}.rs` + `engine_regression.rs::single_stream_resumes_from_part_len`。
 - **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
   `templates/index.html`（2813 行 jQuery 单页，`include_str!` 整体嵌入）拆为：服务端 Maud
   视图层 `crates/adapter/src/web/view/`（`page_shell` 首屏 + 各区域 HTML 片段）+ htmx 片段
@@ -51,8 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   删除原 JS 的 `collectAdminConfig`/`validateAdminConfig` 重复。
 
 ### Fixed
-- **download_async 超时文案假承诺** —— 「已下载部分保留为 .part，重试将复用」与代码漂移
-  （现实现重试 truncate 重写、不复用），改为如实「请重试（将重新完整下载）」；真复用待 FSM 落地。
+- **download_async 超时文案假承诺 → 续传落地后成真** —— 原「已下载部分保留为 .part，重试将复用」
+  与代码漂移（旧实现重试 truncate 重写、不复用）。v3 中段先改如实「请重试（将重新完整下载）」；
+  断点续传（PR-R1~R5）落地后文案改回「已下载部分保留，重试将从断点续传」并由 resume regression 锁死
+  （`tests/{ranged_resume,refresh_resume}.rs` + 反退化锁覆盖指认，防再漂移）。
 - **「解析跳转后点击查询小卡顿」** —— 根因是 `#search-btn`（检索）点击后**无即时视觉反馈**
   （4 个主动作按钮里唯一漏反馈的），网络往返期间用户以为卡住。htmx `.htmx-request` CSS 在点击
   瞬间给按钮加 spinner（单源即时反馈，替代各按钮手写 `disabled+text`），根治该卡顿观感。
@@ -467,7 +484,8 @@ embed-assets fast-follow patch。主服务行为无变化。
     DownloadError, observability LogEvent, RAII helpers). Engine
     + helpers modularized.
   - **Deferred to v4** (full plan §6 items not landed in v3):
-    - DownloadJob FSM with UrlRefresher + Range resume from .part
+    - ~~DownloadJob FSM with UrlRefresher + Range resume from .part~~
+      **→ LANDED in v4 (PR-R1~R5, see [Unreleased] Added)**
     - MusicInfo split into MusicMetadata + DownloadableSong typestate
     - DownloadOutcome enum replacing DownloadResult struct
     - TaskStore typed transitions (replace `update(FnOnce)`)

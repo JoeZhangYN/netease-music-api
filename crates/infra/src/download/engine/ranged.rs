@@ -79,7 +79,11 @@ fn chunk_grid(content_length: u64, ranged_threads: usize) -> Vec<ChunkRange> {
 
 /// 续传决策：从 sidecar 读 manifest，判定 `.part` 是否可续。
 ///
-/// 有效条件（plan §8.1，本 PR 只比 content_length——song_id/quality 占位待 R4 接 driver）：
+/// 有效条件（plan §8.1）——**仅比 `content_length`**：manifest 的 `content_length` 是续传安全的
+/// 充分判据（不一致 = 文件不同 / quality 变 → 字节错位，全量重来）。`song_id`/`quality` 字段在
+/// `download_adaptive` 签名拿不到真值（R4 driver 未 thread 进来，见 plan Errata；不为传参大改
+/// 调用链），故新建 manifest 填占位 0/""——这两字段当前是 best-effort 元数据，不参与校验，
+/// content_length 单比已足够保证续传字节正确。
 /// - manifest 存在且 `content_length` 与本次一致 → 续传，返回 `(manifest, false)`（不截断）。
 /// - manifest 缺失 / 损坏 / content_length 不符 → 全量重来，返回 `(新建空 manifest, true)`（需截断）。
 fn resolve_resume(
@@ -92,8 +96,7 @@ fn resolve_resume(
     match loaded {
         Some(m) if m.content_length == content_length => (m, false),
         _ => (
-            // song_id=0 / quality="" 为占位——本 PR 拿不到真值（plan：不为传参大改
-            // wrapper/调用链签名，R4 接 driver 时传真值）。校验逻辑相应只比 content_length。
+            // song_id=0 / quality="" 占位——非校验字段（content_length 单比已保证字节正确）。
             PartManifest::new(0, String::new(), content_length, chunk_size),
             true,
         ),
@@ -271,6 +274,9 @@ async fn download_remaining_and_pwrite(
     // 预分配 `.part` 至 content_length（pwrite 到 offset 需文件已具该长度）。
     // PR-R3：仅全量重来（needs_truncate）时截断 + set_len——这是唯一保留的截断站点。
     // 续传时 `.part` 已全长，不截断（否则抹掉已填字节），用 `create(false)` 仅打开。
+    // resume-truncate-gate: exempt — truncate 由 needs_truncate 门控（仅 manifest 缺失/
+    // 损坏/content_length 不符的全量重来才置 true），非无条件 truncate(true)。反退化锁
+    // tests/no_truncate_in_resume_primitives.rs 禁此外的 File::create/truncate(true) 复活。
     {
         let f = tokio::fs::OpenOptions::new()
             .create(needs_truncate)
