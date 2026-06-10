@@ -184,3 +184,102 @@ async fn outer_timeout_unblocks_when_server_hangs() {
 // happens to allow through. PR-8's engine FSM rewrite will introduce a
 // dedicated low-level mock with raw TCP control for stream-truncation
 // repro coverage.
+
+// ─────────────────────────────────────────────────────────────────────────
+// PR-R2 — single-stream 字节续传回归（plan §8.2 #2）
+// ─────────────────────────────────────────────────────────────────────────
+
+/// PR-R2: 预置 `.part` 含 N 字节 → 续传发 `Range: bytes=N-`，206 返回后缀 →
+/// 最终文件完整、前 N 字节是原 `.part` 内容（未被重写）。
+#[tokio::test]
+async fn single_stream_resumes_from_part_len() {
+    let full: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+    let prefix_len = 400usize;
+    let suffix = full[prefix_len..].to_vec();
+
+    let server = MockServer::start().await;
+    // 续传请求期望 206 + 后缀字节（仅 [N, len)）。wiremock 对所有 GET 返同一响应；
+    // 收到的 Range header 由 received_requests 事后断言。
+    Mock::given(method("GET"))
+        .and(path("/song.mp3"))
+        .respond_with(ResponseTemplate::new(206).set_body_bytes(suffix.clone()))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let final_path = dir.path().join("output.mp3");
+    let part_path = part_path_for(&final_path);
+
+    // 预置 .part：前 N 字节 = full 的前缀（模拟上次中断时已落盘）。
+    std::fs::write(&part_path, &full[..prefix_len]).unwrap();
+
+    let url = format!("{}/song.mp3", server.uri());
+    let client = make_client(ClientProfile::Download);
+    let config = DownloadConfig::default();
+
+    download_file_ranged(&client, &url, &final_path, full.len() as u64, None, &config)
+        .await
+        .expect("resume download should succeed");
+
+    // 服务器实际收到的是 `Range: bytes=400-`（续传起点 = .part 长度）。
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1, "exactly one resume GET expected");
+    let range = reqs[0]
+        .headers
+        .get("Range")
+        .and_then(|v| v.to_str().ok())
+        .expect("resume request must carry a Range header");
+    assert_eq!(
+        range,
+        format!("bytes={prefix_len}-"),
+        "Range start must equal the existing .part length"
+    );
+
+    // 最终文件完整 + 内容 == full（前 N 字节即原 .part 前缀，未被重写）。
+    let actual = std::fs::read(&final_path).unwrap();
+    assert_eq!(actual.len(), full.len(), "resumed file size matches full");
+    assert_eq!(actual, full, "resumed content == full (prefix preserved)");
+    assert!(
+        !part_path.exists(),
+        ".part should be renamed away after success"
+    );
+}
+
+/// PR-R2: 服务器不支持 Range（对 Range 请求返 200 全量）→ 一次性降级截断重下，
+/// 结果仍完整正确（正确性优先于带宽）。
+#[tokio::test]
+async fn single_stream_200_fallback_redownloads_full() {
+    let full: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    let prefix_len = 400usize;
+
+    let server = MockServer::start().await;
+    // 服务器忽略 Range，永远返 200 + 全量 body（不支持 Range 的 CDN 行为）。
+    Mock::given(method("GET"))
+        .and(path("/nofr.mp3"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(full.clone()))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let final_path = dir.path().join("nofr.mp3");
+    let part_path = part_path_for(&final_path);
+
+    // 预置一个旧 .part（含 N 字节、且故意填非 full 内容，验证 200 降级会整段重写）。
+    std::fs::write(&part_path, vec![0xEEu8; prefix_len]).unwrap();
+
+    let url = format!("{}/nofr.mp3", server.uri());
+    let client = make_client(ClientProfile::Download);
+    let config = DownloadConfig::default();
+
+    download_file_ranged(&client, &url, &final_path, full.len() as u64, None, &config)
+        .await
+        .expect("200-fallback full re-download should succeed");
+
+    let actual = std::fs::read(&final_path).unwrap();
+    assert_eq!(actual.len(), full.len(), "full re-download size matches");
+    assert_eq!(
+        actual, full,
+        "200 fallback must produce full content, not appended to stale .part"
+    );
+    assert!(!part_path.exists(), ".part renamed away after success");
+}
