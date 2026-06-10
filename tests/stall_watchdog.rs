@@ -35,9 +35,10 @@ use tracing_subscriber::fmt::MakeWriter;
 /// 本文件测试串行 guard（#1524 竞态真凶）：tracing 宏的 callsite interest 缓存在
 /// `set_default` 注册新 subscriber 时 rebuild——若另一测试线程**并发**执行同一
 /// `warn!` callsite，本线程可偶发读到 stale 的 off interest → 宏短路、事件根本
-/// 不生成（与 runtime flavor 无关；`--test-threads=1` 稳绿即此证）。static Mutex
-/// 串行化本文件测试，结构性消除并发窗口。`into_inner` 防 panic 毒化连锁。
-static TEST_SERIAL: Mutex<()> = Mutex::new(());
+/// 不生成（与 runtime flavor 无关；`--test-threads=1` 稳绿即此证）。串行化本文件
+/// 测试，结构性消除并发窗口。用 tokio Mutex：guard 跨 `.await` 持有（std Mutex
+/// 触发 await_holding_lock deny），且无毒化语义免 poisoned 处理。
+static TEST_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 把 tracing 输出写入共享 buffer 的 MakeWriter，供测试断言 `download_stalled` 事件 emit。
 #[derive(Clone)]
@@ -175,7 +176,7 @@ fn stall_config(budget: u32, stall_secs: u64, refresher: Arc<dyn UrlRefresher>) 
 /// single_stream 无并发 spawn），current_thread 让所有 poll 留在本线程，捕获恒生效。
 #[tokio::test]
 async fn stall_escalates_to_refresh_and_completes() {
-    let _serial = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = TEST_SERIAL.lock().await;
     let body: Vec<u8> = (0..2000).map(|i| (i % 251) as u8).collect();
     let total = body.len() as u64;
     let base = spawn_stall_server("/stall.flac", body.clone());
@@ -232,7 +233,7 @@ async fn stall_escalates_to_refresh_and_completes() {
 /// current_thread 与上一测试同构（无 tracing 断言故无竞态，但保持一致防再踩）。
 #[tokio::test]
 async fn persistent_stall_exhausts_budget_and_fails() {
-    let _serial = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = TEST_SERIAL.lock().await;
     let body: Vec<u8> = (0..2000).map(|i| (i % 251) as u8).collect();
     let total = body.len() as u64;
     // server 所有路径都含 "stall" → 恒挂死（refresh 取到的新 url 也 stall）。
