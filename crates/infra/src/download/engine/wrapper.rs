@@ -27,7 +27,7 @@ use netease_kernel::observability::LogEvent;
 
 use super::ranged::download_adaptive;
 use super::single_stream::download_single_stream;
-use super::{download_client, part_path_for, DownloadConfig, ProgressCallback};
+use super::{download_client, part_path_for, sidecar_path_for, DownloadConfig, ProgressCallback};
 use crate::download::tags::write_music_tags_async;
 
 /// Download a file from URL with atomic `.part` staging.
@@ -83,6 +83,9 @@ pub async fn download_file_ranged(
                         e
                     ))
                 })?;
+            // PR-R3: rename 成功后删 ranged 续传 sidecar manifest（plan §3.1）。
+            // 容错忽略：sidecar 可能不存在（single_stream 路径 / 小文件）。
+            let _ = std::fs::remove_file(sidecar_path_for(&part_path));
             Ok(())
         }
         Err(e) => Err(e),

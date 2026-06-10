@@ -149,6 +149,16 @@ impl PartManifest {
     pub fn is_complete(&self) -> bool {
         self.contiguous_prefix() >= self.content_length
     }
+
+    /// 闭区间 `[start, end]` 是否被某个已记录区间**完整覆盖**。纯函数。
+    ///
+    /// 与 `contiguous_prefix` 不同：本方法判断**任意**位置的区间（含非连续前缀之后的、
+    /// 已完成的离散 chunk），让 ranged 续传跳过所有已完成 chunk 而非仅连续前缀——并发
+    /// chunk 部分成功后 `completed` 天然非连续（如 chunk 0/2 成功、chunk 1 失败），此时
+    /// 应只重下 chunk 1，不重下 chunk 2。依赖 `completed` 规范形（升序不重叠）。
+    pub fn is_range_complete(&self, start: u64, end: u64) -> bool {
+        self.completed.iter().any(|&(s, e)| s <= start && end <= e)
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +230,26 @@ mod tests {
         m.record_chunk(0, 300);
         m.record_chunk(200, 500); // 与 [0,300] 重叠 → 合并 [0,500]
         assert_eq!(m.contiguous_prefix(), 501);
+    }
+
+    #[test]
+    fn is_range_complete_covers_discontiguous_chunks() {
+        let mut m = sample(); // content_length 1000
+        m.record_chunk(0, 255); // chunk 0
+        m.record_chunk(512, 767); // chunk 2（中间 [256,511] 缺）
+                                  // 已记录区间内的 chunk 判定 complete，即便不在连续前缀。
+        assert!(m.is_range_complete(0, 255), "chunk 0 fully recorded");
+        assert!(
+            m.is_range_complete(512, 767),
+            "discontiguous chunk 2 fully recorded"
+        );
+        // 缺口 chunk 1 未记录 → not complete。
+        assert!(!m.is_range_complete(256, 511), "gap chunk not recorded");
+        // 跨越已记录区间边界的部分覆盖 → not complete（必须单区间完整含之）。
+        assert!(
+            !m.is_range_complete(200, 300),
+            "spanning a gap is not complete"
+        );
     }
 
     #[test]

@@ -99,3 +99,16 @@ pub fn part_path_for(file_path: &Path) -> PathBuf {
     name.push(".part");
     file_path.with_file_name(name)
 }
+
+/// Compute the ranged-resume sidecar manifest path for a given `.part` path.
+/// Convention `<part>.json` (plan §7.1 table: `<final>.part.json`). Single source
+/// for the sidecar location so ranged.rs and wrapper.rs (sidecar delete after
+/// rename) agree on one path derivation.
+pub fn sidecar_path_for(part_path: &Path) -> PathBuf {
+    let mut name = part_path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
+    name.push(".json");
+    part_path.with_file_name(name)
+}
