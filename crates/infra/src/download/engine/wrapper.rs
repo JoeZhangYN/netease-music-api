@@ -16,7 +16,7 @@ use reqwest::Client;
 use tracing::{info, warn};
 
 use crate::cache::cover_cache::CoverCache;
-use netease_domain::model::download::DownloadResult;
+use netease_domain::model::download::DownloadOutcome;
 use netease_domain::model::music_info::{build_file_path, DownloadUrl, MusicInfo};
 use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_domain::port::cookie_store::CookieStore;
@@ -101,7 +101,7 @@ pub async fn download_music_file(
     config: &DownloadConfig,
     fallback_cfg: &netease_domain::service::song_service::QualityFallbackConfig,
     trace_id: &str,
-) -> Result<DownloadResult, AppError> {
+) -> Result<DownloadOutcome, AppError> {
     let cookies = cookie_store.parse().unwrap_or_default();
     let music_info =
         download_service::get_music_info(api, music_id, quality, &cookies, fallback_cfg, trace_id)
@@ -116,7 +116,7 @@ pub async fn download_music_file(
     let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
         let cover_data = cover_cache.fetch(client, &music_info.pic_url).await;
-        return Ok(DownloadResult::ok_with_cover(
+        return Ok(DownloadOutcome::with_cover(
             file_path,
             cached_size,
             music_info,
@@ -197,7 +197,7 @@ pub async fn download_music_file(
         trace_id = %trace_id,
         "download completed"
     );
-    Ok(DownloadResult::ok_with_cover(
+    Ok(DownloadOutcome::with_cover(
         file_path, size, music_info, cover_data,
     ))
 }
@@ -210,7 +210,7 @@ pub async fn download_music_with_metadata(
     on_progress: Option<ProgressCallback>,
     do_write_tags: bool,
     config: &DownloadConfig,
-) -> Result<DownloadResult, AppError> {
+) -> Result<DownloadOutcome, AppError> {
     let quality = if music_info.quality.is_empty() {
         DEFAULT_QUALITY
     } else {
@@ -224,7 +224,7 @@ pub async fn download_music_with_metadata(
 
     let cached_size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
     if cached_size > 0 && music_info.file_size > 0 && cached_size == music_info.file_size {
-        return Ok(DownloadResult::ok(
+        return Ok(DownloadOutcome::new(
             file_path,
             cached_size,
             music_info.clone(),
@@ -269,5 +269,5 @@ pub async fn download_music_with_metadata(
     }
 
     let size = std::fs::metadata(&file_path).map_or(0, |m| m.len());
-    Ok(DownloadResult::ok(file_path, size, music_info.clone()))
+    Ok(DownloadOutcome::new(file_path, size, music_info.clone()))
 }

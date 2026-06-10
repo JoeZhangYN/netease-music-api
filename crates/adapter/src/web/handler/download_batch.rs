@@ -135,17 +135,14 @@ pub async fn download_batch(
         drop(download_guard);
         drop(parse_guard);
 
-        match dl_result {
-            Ok(result) if result.success => {
-                // success=true 路径保证两字段 Some（DownloadResult invariant）
-                #[allow(clippy::unwrap_used)]
-                track_data.push(TrackData {
-                    file_path: result.file_path.unwrap(),
-                    music_info: result.music_info.unwrap(),
-                    cover_data: result.cover_data,
-                });
-            }
-            _ => {}
+        // DownloadOutcome 必填字段：成功产物必有 file_path / music_info（类型不变量）；
+        // 失败（Err）尽力而为静默跳过，与既有批量语义一致。
+        if let Ok(outcome) = dl_result {
+            track_data.push(TrackData {
+                file_path: outcome.file_path,
+                music_info: outcome.music_info,
+                cover_data: outcome.cover_data,
+            });
         }
     }
 

@@ -112,8 +112,12 @@ pub async fn download_result(State, Path(task_id)) -> Response;
 ```
 
 内部函数:
-- `single_download_worker`: acquire download_semaphore → do_single_download → release
-- `do_single_download`: fetch_url → download → cover → package ZIP → update task
+- `single_download_worker`: acquire download_semaphore → do_single_download → release；
+  do_single_download 返 `Err` 时在此**单点**渲染 `t.error` 文案（`SingleDownloadError::Display`）
+- `do_single_download`: fetch_url → download → cover → package ZIP → update task。
+  v4 typed-outcome-uplift：返回 `Result<(), SingleDownloadError>`（取代 `Result<(), String>` +
+  `grep-gate-skip` 豁免）；`SingleDownloadError` enum（`Upstream(AppError)`/`NoUrl`/`Timeout`/
+  `Packaging`，显式穷尽 `Display` match 反退化）把散落体内的 3 处 `t.error` 写入收敛到 boundary 单源
 
 ## download_batch.rs (核心)
 

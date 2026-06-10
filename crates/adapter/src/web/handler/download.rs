@@ -117,16 +117,10 @@ pub async fn download_music(
     drop(parse_guard);
     drop(download_guard);
 
-    if !result.success {
-        return APIResponse::error(&format!("下载失败: {}", result.error_message), 500)
-            .into_response();
-    }
-
-    // download_music_file 成功路径保证两字段 Some（DownloadResult invariant）
-    #[allow(clippy::unwrap_used)]
-    let file_path = result.file_path.as_ref().unwrap();
-    #[allow(clippy::unwrap_used)]
-    let mi = result.music_info.as_ref().unwrap();
+    // DownloadOutcome 必填字段：成功必有 file_path / music_info（类型不变量，
+    // 失败已由上面的 Err 分支拦截）——无需 success 判定与约定式 unwrap。
+    let file_path = &result.file_path;
+    let mi = &result.music_info;
 
     if return_format == "json" {
         let file_type = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");

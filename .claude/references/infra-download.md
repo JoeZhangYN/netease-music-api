@@ -20,7 +20,7 @@
 
 ## engine.rs
 
-依赖: `reqwest::Client`, `MusicInfo`, `DownloadResult`, `CookieStore`, `MusicApi`, `CoverCache`, `download_service`, `write_music_tags`
+依赖: `reqwest::Client`, `MusicInfo`, `DownloadOutcome`, `CookieStore`, `MusicApi`, `CoverCache`, `download_service`, `write_music_tags`
 
 ```rust
 pub struct DownloadConfig {
@@ -65,13 +65,14 @@ pub async fn download_file_ranged(
 pub async fn download_music_file(
     client, api, cookie_store, cover_cache, downloads_dir,
     music_id, quality, on_progress,
-) -> Result<DownloadResult, AppError>;
-// 完整下载流程: 解析→下载→标签→封面
+) -> Result<DownloadOutcome, AppError>;
+// 完整下载流程: 解析→下载→标签→封面; 成功载荷 DownloadOutcome (必填 file_path/music_info,
+//   失败由 Err(AppError) 承载, v4 typed-outcome-uplift)
 
 pub async fn download_music_with_metadata(
     client, downloads_dir, music_info, cover_data,
     on_progress, do_write_tags,
-) -> Result<DownloadResult, AppError>;
+) -> Result<DownloadOutcome, AppError>;
 // 带预取元数据的下载 (批量下载主入口)
 ```
 

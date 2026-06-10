@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **typed-outcome-uplift：`do_single_download` String 错误 → typed + `DownloadResult` →
+  `DownloadOutcome`**（tech-debt 扫描唯一成立的代码真阳）—— 两处「注释约定 + 约定式 unwrap」
+  升为类型不变量：
+  - **`do_single_download` 错误 typed**：`Result<(), String>`（带 `grep-gate-skip` 豁免、deferred
+    到 v4）→ `Result<(), SingleDownloadError>`（adapter enum `Upstream(AppError)` / `NoUrl` /
+    `Timeout` / `Packaging`，**显式穷尽 `Display` match**——无 `_` 兜底，新增变体漏文案即编译错）。
+    散落函数体内的 3 处 `task_store.update(stage=Error, error=…)`（空链接 / 超时 / 引擎失败）收敛到
+    `single_download_worker` boundary **单点**渲染——用户面 `task.error` 文案 SSOT。域层
+    `DownloadError` / kernel `AppError` 保持纯净（AP-007）；背景 worker 写 `t.error` 供前端轮询、
+    不经 `AppErrorResponse`（不变量 #7 的 HTTP 映射）路径，故文案留 adapter 边界。`grep-gate-skip`
+    豁免随 String 签名一并删除。
+  - **`DownloadResult` → `DownloadOutcome`**：下载引擎成功载荷的 `success: bool` +
+    `Option<file_path>` + `Option<music_info>` + `error_message` + `fail()` 全 vestigial（失败一律走
+    `Err(AppError)`，`::fail` 零 caller、`success` 恒 true）。收敛为必填字段 struct
+    （`file_path: PathBuf` / `music_info: MusicInfo`，`cover_data` 仍 Option），「成功必有
+    file_path/music_info」从注释约定升为类型不变量——4 处 handler 约定式
+    `#[allow(clippy::unwrap_used)]` unwrap（download / download_meta / download_async /
+    download_batch）+ 3 处 dead `if !result.success` 分支全消除。**形态取舍**：单一成功形态 →
+    必填字段 struct 而非单变体 enum（铁律 1：不为抽象而抽象）。
+  - **反退化**：`SingleDownloadError::Display` 4 文案锚 unit test（`download_async.rs` 内联）+
+    `DownloadOutcome` 必填字段 contract test（`domain/model/download.rs` 内联 +
+    `tests/contract_download_link.rs`，随 `fail()` 删除移除 fail 用例）。`domain/model/download.rs`
+    的 test-gate 豁免（「PR-7 重构 DownloadOutcome 时移除」）随重构兑现删除。
 - **不变量 #5 真正落地：PermitGuard 全量迁移 + 机械拆桥** —— PR-9 造了 RAII helper 但 13 个
   handler 全部仍手动 `stats.increment/decrement + drop(permit)` 配对（panic 路径漏 decrement）。
   本轮 13 个 handler（JSON + ui/）全迁 `PermitGuard::acquire`；`AppState` 三信号量字段
@@ -530,7 +553,10 @@ embed-assets fast-follow patch。主服务行为无变化。
     - ~~DownloadJob FSM with UrlRefresher + Range resume from .part~~
       **→ LANDED in v4 (PR-R1~R5, see [Unreleased] Added)**
     - MusicInfo split into MusicMetadata + DownloadableSong typestate
-    - DownloadOutcome enum replacing DownloadResult struct
+    - ~~DownloadOutcome enum replacing DownloadResult struct~~
+      **→ LANDED in v4 (typed-outcome-uplift, see [Unreleased] Changed) — 落为必填字段
+      struct（非 enum）：失败已由 `Err(AppError)` 承载，成功仅一种形态，单变体 enum =
+      为抽象而抽象（铁律 1）；exhaustive-match 反退化由 `SingleDownloadError` 承载**
     - TaskStore typed transitions (replace `update(FnOnce)`)
     - StatsKind enum replacing `&str` (~30 sites)
     - ParsedCookies smart constructor wrapper

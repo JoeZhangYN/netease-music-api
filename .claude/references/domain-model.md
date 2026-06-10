@@ -9,7 +9,7 @@
 | quality.rs | 20 | 音质枚举 + 显示名映射 (含 dolby) |
 | song.rs | 47 | SongUrlData 值对象 + artist 提取 |
 | music_info.rs | 45 | MusicInfo 核心值对象 + 文件路径构建 |
-| download.rs | 92 | DownloadResult + TaskInfo + now() |
+| download.rs | 270 | DownloadOutcome + DownloadError + TaskStage + TaskInfo + now() (含反退化 tests) |
 | cookie.rs | 58 | Cookie 解析 + 验证 |
 
 ## quality.rs
@@ -69,18 +69,30 @@ pub fn build_file_path(downloads_dir: &Path, music_info: &MusicInfo, quality: &s
 
 ## download.rs
 
-依赖: `serde::Serialize`, `music_info::MusicInfo`
+依赖: `serde::Serialize`, `music_info::MusicInfo`, `kernel::error::AppError`
 
 ```rust
-pub struct DownloadResult {
-    pub success: bool, pub file_path: Option<PathBuf>, pub file_size: u64,
-    pub error_message: String, pub music_info: Option<MusicInfo>,
-    pub cover_data: Option<Vec<u8>>,
+// v4 typed-outcome-uplift：DownloadResult struct（success 标志 + Option 字段 +
+// fail()）→ DownloadOutcome。「成功必有 file_path/music_info」从注释约定升为类型
+// 不变量（必填字段）——非法状态不可表示，handler 约定式 unwrap 全消除。失败由
+// 下载引擎的 Err(AppError) 承载，**不**进入本类型；故无 success/error_message。
+// 单一成功形态 → 必填字段 struct 而非单变体 enum（铁律 1：不为抽象而抽象）。
+pub struct DownloadOutcome {
+    pub file_path: PathBuf, pub file_size: u64,
+    pub music_info: MusicInfo, pub cover_data: Option<Vec<u8>>,
 }
-impl DownloadResult {
-    pub fn ok(path, size, info) -> Self;
-    pub fn ok_with_cover(path, size, info, cover) -> Self;
-    pub fn fail(msg) -> Self;
+impl DownloadOutcome {
+    pub const fn new(file_path, file_size, music_info) -> Self;          // cover = None
+    pub const fn with_cover(file_path, file_size, music_info, cover) -> Self;
+}
+
+// PR-7 typed 错误分类（engine 内部重试决策区分；From<DownloadError> for AppError
+// 粗折叠做 HTTP 状态映射，不变量 #7/#15）。derive Clone/PartialEq/Eq 供续传 FSM
+// 的 ResumeState::Failed(DownloadError) 断言状态相等。
+pub enum DownloadError {
+    UrlExpired { status: u16 }, ChunkShortRead { expected, actual },
+    DiskFull { need, have }, Cancelled, Timeout { secs },
+    Network(String), Io(String), Other(String),
 }
 
 pub struct TaskInfo {

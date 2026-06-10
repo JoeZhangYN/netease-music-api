@@ -1,5 +1,4 @@
-// test-gate: exempt PR-1 (CI bootstrap) scope; download 模型测试已在 tests/contract_download_link.rs + tests/task_state_machine.rs 覆盖；PR-7 重构为 DownloadOutcome enum 时再统一移除豁免
-// file-size-gate: exempt PR-7 — DownloadResult / TaskInfo / DownloadError 同主题
+// file-size-gate: exempt — DownloadOutcome / TaskInfo / TaskStage / DownloadError + 反退化 tests 同主题
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -65,52 +64,47 @@ impl From<DownloadError> for AppError {
     }
 }
 
+/// 成功下载的产物——下载引擎（`download_music_file` /
+/// `download_music_with_metadata`）成功路径的返回载荷。失败由 `Err(AppError)`
+/// 表达，**不**进入本类型；故这里没有 `success` 标志、没有 `Option<file_path>`：
+/// 「成功必有 file_path / music_info」从注释约定升为**类型不变量**（必填字段），
+/// handler 侧约定式 `unwrap()`（`#[allow(clippy::unwrap_used)]`）随之消除——
+/// 非法状态（success=true 却 file_path=None）不可表示。
+///
+/// 形态取舍：失败已由 `Err` 承载，成功仅一种形态，故用**必填字段 struct**而非
+/// 单变体 enum（单变体 enum = 为抽象而抽象，CLAUDE.md 铁律 1）。`cover_data`
+/// 仍 `Option`——封面抓取失败不阻断下载，是真实的可选项而非非法状态。
 #[derive(Debug, Clone)]
-pub struct DownloadResult {
-    pub success: bool,
-    pub file_path: Option<PathBuf>,
+pub struct DownloadOutcome {
+    pub file_path: PathBuf,
     pub file_size: u64,
-    pub error_message: String,
-    pub music_info: Option<MusicInfo>,
+    pub music_info: MusicInfo,
     pub cover_data: Option<Vec<u8>>,
 }
 
-impl DownloadResult {
-    pub const fn ok(path: PathBuf, size: u64, info: MusicInfo) -> Self {
+impl DownloadOutcome {
+    /// 无封面的完成产物（缓存命中 / 不抓封面路径）。
+    pub const fn new(file_path: PathBuf, file_size: u64, music_info: MusicInfo) -> Self {
         Self {
-            success: true,
-            file_path: Some(path),
-            file_size: size,
-            error_message: String::new(),
-            music_info: Some(info),
+            file_path,
+            file_size,
+            music_info,
             cover_data: None,
         }
     }
 
-    pub const fn ok_with_cover(
-        path: PathBuf,
-        size: u64,
-        info: MusicInfo,
-        cover: Option<Vec<u8>>,
+    /// 带（可选）封面的完成产物。
+    pub const fn with_cover(
+        file_path: PathBuf,
+        file_size: u64,
+        music_info: MusicInfo,
+        cover_data: Option<Vec<u8>>,
     ) -> Self {
         Self {
-            success: true,
-            file_path: Some(path),
-            file_size: size,
-            error_message: String::new(),
-            music_info: Some(info),
-            cover_data: cover,
-        }
-    }
-
-    pub fn fail(msg: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            file_path: None,
-            file_size: 0,
-            error_message: msg.into(),
-            music_info: None,
-            cover_data: None,
+            file_path,
+            file_size,
+            music_info,
+            cover_data,
         }
     }
 }
@@ -207,4 +201,66 @@ pub fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)] // tests: invariant 断言可 panic
+mod tests {
+    use super::*;
+    use crate::model::music_info::DownloadUrl;
+
+    fn sample_info() -> MusicInfo {
+        MusicInfo {
+            id: 42,
+            name: "n".into(),
+            artists: "a".into(),
+            album: "al".into(),
+            pic_url: String::new(),
+            duration: 0,
+            track_number: 0,
+            download_url: DownloadUrl::new(String::new()),
+            file_type: "flac".into(),
+            file_size: 0,
+            quality: "lossless".into(),
+            lyric: String::new(),
+            tlyric: String::new(),
+        }
+    }
+
+    #[test]
+    fn outcome_fields_are_non_optional() {
+        // 类型不变量：成功产物必有 file_path / music_info（无 Option / 无 success
+        // 标志）——非法状态不可表示，替代 pre-v4 的注释约定 + handler unwrap。
+        let o = DownloadOutcome::new(PathBuf::from("/tmp/x.flac"), 1024, sample_info());
+        assert_eq!(o.file_path, PathBuf::from("/tmp/x.flac"));
+        assert_eq!(o.file_size, 1024);
+        assert_eq!(o.music_info.id, 42);
+        assert!(o.cover_data.is_none());
+    }
+
+    #[test]
+    fn outcome_with_cover_keeps_bytes() {
+        let cover = Some(vec![0xFF, 0xD8, 0xFF]);
+        let o =
+            DownloadOutcome::with_cover(PathBuf::from("/tmp/x.flac"), 2048, sample_info(), cover);
+        assert_eq!(o.cover_data.unwrap().len(), 3);
+    }
+
+    #[test]
+    fn download_error_collapses_to_app_error_status() {
+        // 不变量 #7/#15 链路：DownloadError 粗粒度折叠进 AppError 做 HTTP 状态映射。
+        assert_eq!(AppError::from(DownloadError::Cancelled).status_code(), 499);
+        assert_eq!(
+            AppError::from(DownloadError::Timeout { secs: 30 }).status_code(),
+            504
+        );
+        assert_eq!(
+            AppError::from(DownloadError::DiskFull { need: 1, have: 0 }).status_code(),
+            507
+        );
+        assert_eq!(
+            AppError::from(DownloadError::UrlExpired { status: 403 }).status_code(),
+            500
+        );
+    }
 }

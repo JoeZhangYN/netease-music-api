@@ -117,14 +117,9 @@ pub async fn download_with_metadata(
         Err(e) => return APIResponse::error(&format!("下载失败: {e}"), 500).into_response(),
     };
 
-    if !result.success {
-        return APIResponse::error(&format!("下载失败: {}", result.error_message), 500)
-            .into_response();
-    }
-
-    // success=true 路径保证 file_path Some（DownloadResult invariant）
-    #[allow(clippy::unwrap_used)]
-    let file_path = result.file_path.as_ref().unwrap();
+    // DownloadOutcome 必填字段：成功必有 file_path（类型不变量，失败已由上面的
+    // Err 分支拦截）——无需 success 判定与约定式 unwrap。
+    let file_path = &result.file_path;
     write_music_tags_async(file_path, &music_info, cover_data.as_deref()).await;
 
     let tracks = vec![TrackData {

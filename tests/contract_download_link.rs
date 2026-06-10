@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use netease_domain::model::download::{DownloadResult, TaskInfo, TaskStage};
+use netease_domain::model::download::{DownloadOutcome, TaskInfo, TaskStage};
 use netease_domain::model::music_info::{
     build_file_path, determine_file_extension, DownloadUrl, MusicInfo,
 };
@@ -126,44 +126,31 @@ fn c6_done_to_retrieved_is_valid_transition() {
     assert!(!second_first_access);
 }
 
-// --- DownloadResult invariants ---
+// --- DownloadOutcome invariants ---
+// v4 typed-outcome-uplift：DownloadResult struct（success/Option 字段 + fail()）→
+// DownloadOutcome（必填 file_path/music_info，失败由 Err(AppError) 承载）。「成功必有
+// file_path/music_info」从注释约定升为类型不变量，故无 success/error_message/fail 断言。
 
 #[test]
-fn download_result_ok_invariants() {
+fn download_outcome_required_fields() {
     let info = sample_music_info();
-    let result = DownloadResult::ok(PathBuf::from("/tmp/test.flac"), 1024, info);
+    let outcome = DownloadOutcome::new(PathBuf::from("/tmp/test.flac"), 1024, info);
 
-    assert!(result.success);
-    assert!(result.file_path.is_some());
-    assert!(result.music_info.is_some());
-    assert!(result.error_message.is_empty());
-    assert_eq!(result.file_size, 1024);
-    assert!(result.cover_data.is_none());
+    assert_eq!(outcome.file_path, PathBuf::from("/tmp/test.flac"));
+    assert_eq!(outcome.file_size, 1024);
+    assert_eq!(outcome.music_info.id, 12345);
+    assert!(outcome.cover_data.is_none());
 }
 
 #[test]
-fn download_result_ok_with_cover_invariants() {
+fn download_outcome_with_cover_invariants() {
     let info = sample_music_info();
     let cover = Some(vec![0xFF, 0xD8, 0xFF]);
-    let result = DownloadResult::ok_with_cover(PathBuf::from("/tmp/test.flac"), 2048, info, cover);
+    let outcome = DownloadOutcome::with_cover(PathBuf::from("/tmp/test.flac"), 2048, info, cover);
 
-    assert!(result.success);
-    assert!(result.file_path.is_some());
-    assert!(result.music_info.is_some());
-    assert!(result.cover_data.is_some());
-    assert_eq!(result.cover_data.unwrap().len(), 3);
-}
-
-#[test]
-fn download_result_fail_invariants() {
-    let result = DownloadResult::fail("something went wrong");
-
-    assert!(!result.success);
-    assert!(result.file_path.is_none());
-    assert!(result.music_info.is_none());
-    assert!(result.cover_data.is_none());
-    assert_eq!(result.file_size, 0);
-    assert_eq!(result.error_message, "something went wrong");
+    assert_eq!(outcome.file_size, 2048);
+    assert!(outcome.cover_data.is_some());
+    assert_eq!(outcome.cover_data.unwrap().len(), 3);
 }
 
 // --- Quality validation ---
