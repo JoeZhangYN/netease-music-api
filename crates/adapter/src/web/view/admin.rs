@@ -1,8 +1,11 @@
 //! 管理面板片段 —— htmx 驱动，填充 `#admin-content`。
 //!
 //! - `auth_view`：登录 / 首次设置表单（`<form>` 提交，Enter 原生触发）。
-//! - `config_view`：16 滑块（`name` 供 htmx 序列化、inline `oninput` 实时显示值、
-//!   `data-token` 供 `htmx:configRequest` 注入 X-Admin-Token）。
+//! - `config_view`：24 控件（21 slider + 2 toggle + 1 select），逐个对应
+//!   `RuntimeConfig` 全字段（`name` 供 htmx 序列化、inline `oninput`/`onchange`
+//!   实时显示/同步值、`data-token` 供 `htmx:configRequest` 注入 X-Admin-Token）。
+//!   **字段数 vs 控件数对账反退化锁**：`tests/admin_config_ui_coverage.rs`——
+//!   `RuntimeConfig` 新增字段未补 UI 控件即测试期红（防再次漏 UI）。
 //! - `config_msg`：保存/错误提示片段。
 //!
 //! 单位换算（bytes/secs ↔ MB/分/时）+ 字段映射 + 校验全在服务端（`RuntimeConfig::validate`
@@ -10,6 +13,7 @@
 
 use maud::{html, Markup};
 
+use netease_domain::model::quality::Quality;
 use netease_kernel::runtime_config::RuntimeConfig;
 
 /// 登录 / 首次设置表单（`needs_setup`=true 时多一个确认框 + 标题/按钮文案变"设置"）。
@@ -72,8 +76,47 @@ fn slider(
     }
 }
 
-/// 配置视图（16 滑块预填当前值，单位换算 bytes/secs → MB/分/时）。
+/// 布尔开关行（toggle）。**隐藏 input 携带 `name`**（始终提交 `true`/`false`），
+/// checkbox 仅作 UI、`onchange` 把 `this.checked` 写回隐藏值——规避「checkbox
+/// 未勾选则字段缺失」的表单语义坑（始终单值提交，serde_urlencoded 解析为 bool）。
+fn toggle(label: &str, name: &str, value: bool) -> Markup {
+    let hid = format!("hid-{name}");
+    let onchange = format!("document.getElementById('{hid}').value=this.checked");
+    html! {
+        div class="admin-row" {
+            label { (label) }
+            div class="admin-toggle-wrap" {
+                input type="hidden" id=(hid) name=(name) value=(if value { "true" } else { "false" });
+                label class="admin-toggle" {
+                    input type="checkbox" checked[value] onchange=(onchange);
+                    span class="admin-toggle-track" {}
+                }
+            }
+        }
+    }
+}
+
+/// 枚举下拉行（select）。选项源自 `Quality` 枚举（不变量 #10 单源），
+/// 杜绝 HTML 硬编码音质列表漂移（pre-PR-4 `info.rs` 漏 `dolby` 反模式）。
+fn quality_select(label: &str, name: &str, current: &str) -> Markup {
+    html! {
+        div class="admin-row" {
+            label { (label) }
+            div class="admin-select-wrap" {
+                select name=(name) class="admin-select" {
+                    @for q in Quality::ALL {
+                        option value=(q.wire_str()) selected[q.wire_str() == current] { (q.display_name_zh()) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 配置视图（24 控件预填当前值，覆盖 `RuntimeConfig` 全字段；单位换算
+/// bytes/secs → MB/分/时；bool → toggle、quality → select）。
 /// `token` 嵌进 `#admin-config-view` data-token，供后续 PUT/reset/logout 注入头。
+/// 字段数 vs 控件数对账锁见 `tests/admin_config_ui_coverage.rs`。
 pub fn config_view(rc: &RuntimeConfig, token: &str) -> Markup {
     html! {
         div class="admin-card-header" {
@@ -102,6 +145,7 @@ pub fn config_view(rc: &RuntimeConfig, token: &str) -> Markup {
                 (slider("任务 TTL", "task_ttl_min", "1", "120", None, rc.task_ttl_secs / 60, Some("分钟")))
                 (slider("ZIP 最大保留", "zip_max_age_hr", "1", "24", None, rc.zip_max_age_secs / 3600, Some("小时")))
                 (slider("清理循环间隔", "task_cleanup_interval_secs", "5", "600", Some("5"), rc.task_cleanup_interval_secs, Some("秒")))
+                (slider("驱逐宽限", "disk_guard_grace_min", "1", "60", None, rc.disk_guard_grace_secs / 60, Some("分钟")))
 
                 div class="admin-section" { "缓存设置 / Cache" }
                 (slider("封面缓存 TTL", "cover_cache_ttl_min", "1", "120", None, rc.cover_cache_ttl_secs / 60, Some("分钟")))
@@ -111,6 +155,19 @@ pub fn config_view(rc: &RuntimeConfig, token: &str) -> Markup {
                 (slider("批量最大曲数", "batch_max_songs", "1", "500", None, rc.batch_max_songs as u64, None))
                 (slider("最小磁盘余量", "min_free_disk_mb", "100", "10000", Some("100"), rc.min_free_disk / 1_048_576, Some("MB")))
                 (slider("单曲下载超时", "download_timeout_per_song_min", "1", "30", None, rc.download_timeout_per_song_secs / 60, Some("分钟")))
+
+                div class="admin-section" { "速率限制 / Rate Limit" }
+                (slider("单用户速率", "rate_limit_rps_per_user", "0", "1000", None, u64::from(rc.rate_limit_rps_per_user), Some("req/s")))
+                (slider("突发上限", "rate_limit_burst", "0", "10000", None, u64::from(rc.rate_limit_burst), None))
+
+                div class="admin-section" { "音质降级 / Quality Fallback" }
+                (toggle("启用音质降级", "quality_fallback_enabled", rc.quality_fallback_enabled))
+                (quality_select("降级最低音质", "quality_fallback_floor", &rc.quality_fallback_floor))
+
+                div class="admin-section" { "断点续传 / Resume" }
+                (toggle("启用断点续传", "resume_enabled", rc.resume_enabled))
+                (slider("链接刷新预算", "url_refresh_budget", "0", "10", None, u64::from(rc.url_refresh_budget), Some("次")))
+                (slider("卡死超时", "stall_secs", "5", "600", Some("5"), rc.stall_secs, Some("秒")))
 
                 div class="admin-msg" id="admin-config-msg" {}
             }

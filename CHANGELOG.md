@@ -32,6 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   判定为巧合锚/同名异义，维持分立。
 
 ### Added
+- **admin 面板补齐 8 个缺失的运行时配置控件（消除「字段可调但 UI 看不到」缺口）** ——
+  上一 epic 给 `RuntimeConfig` 新增的字段（`disk_guard_grace_secs` / `rate_limit_rps_per_user` /
+  `rate_limit_burst` / `quality_fallback_enabled` / `quality_fallback_floor` / `resume_enabled` /
+  `url_refresh_budget` / `stall_secs`）在 PUT API 可调，但 Maud `config_view` 控件列表逐字段手写、
+  止于 `download_timeout`，管理员看不到也改不了。本轮按既有 SSR 模式补齐：5 slider + 2 toggle
+  （bool）+ 1 select（quality，选项源自 `Quality::ALL`，不变量 #10），`config_view` 现覆盖全 24
+  字段；`SliderForm` + apply 同步扩字段。新增 toggle/select CSS（沿 vermillion/rule 配色）。
+  - **形态取舍**：选「逐字段补齐」而非「转 schema 驱动渲染」——`config_view` 有 per-field 单位
+    换算（bytes→MB / secs→分时），全 schema 驱动须把换算元数据编码进 manifest 并重写 render+parse
+    双路径，对 8 字段缺口属过度工程（铁律 1 防守面）。
+  - **反退化锁**：`crates/adapter/tests/admin_config_ui_coverage.rs` 做「`RuntimeConfig` 字段数
+    vs 控件数」机械对账（serde key 全集 vs `FIELD_TO_CONTROL` 登记 + `config_view` 渲染含 `name=`
+    双锁）——新增字段漏 UI 即 `cargo test` 期红（防再次静默漏 UI）。
+  - **对账发现（未修，留待后续）**：`GET /admin/config/schema`（不变量 #9 声称的 slider 边界 SOT）
+    自前端迁 Maud SSR 后已成**孤岛**——无任何消费者，现有 slider 边界硬编码在 Maud 视图（UI 单位），
+    真正强制 SOT 是 `RuntimeConfig::validate()`。本任务沿既有 SSR 模式（不引入新机制），bounds-SOT
+    统一属独立 epic。
 - **断点续传 DownloadJob FSM 落地（PR-R1~R5，施工图 `.claude/plans/download-resume-fsm.md`）** ——
   下载中途失败不再整文件重来；链接过期自动 refresh 续传。不变量 #1/#8/#20/#22/#23（CLAUDE.md SOT）。
   - **R1 纯类型层**：`ResumeState` enum FSM（`Downloading⇄Refreshing` 环 + 穷尽 match 反退化）+

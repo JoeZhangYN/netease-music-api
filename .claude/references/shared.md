@@ -79,7 +79,8 @@ impl RuntimeConfig {
 }
 ```
 
-- 所有 16 个字段均可通过管理面板 (`/admin/config`) 运行时调整
+- 所有字段（24 个）均可通过管理面板 (`/admin/config`) 运行时调整；UI 控件覆盖
+  由 `crates/adapter/tests/admin_config_ui_coverage.rs` 反退化对账（新增字段漏 UI 即测试红）
 - `validate()` 检查值范围 (如 concurrency 1~100, threshold > 0 等)
 - `load_or_default()` 文件不存在时返回默认值
 - `save()` 原子写入 JSON (先写 .tmp 再 rename)

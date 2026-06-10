@@ -3,9 +3,10 @@
 //! 复用 `handler::admin` 的 `apply_runtime_config`（单源 apply）+ `token_ok`（会话校验）
 //! + `password`/`token` infra。
 //!
-//! config PUT 在服务端 load 当前配置 + 覆盖 16 UI 字段（单位换算）+ `validate()`，好处：
-//! 修复原前端只发 16 字段给 `Json<RuntimeConfig>`（需 20 字段）必 422 的 pre-existing bug；
-//! 保留 UI 未暴露的 4 字段；删除 JS 端 collect/validate 重复（单源）。
+//! config PUT 在服务端 load 当前配置 + 覆盖 UI 字段（单位换算）+ `validate()`，好处：
+//! 修复原前端只发部分字段给 `Json<RuntimeConfig>`（缺字段无 serde default）必 422 的
+//! pre-existing bug；删除 JS 端 collect/validate 重复（单源）。UI 控件现覆盖
+//! `RuntimeConfig` 全 24 字段（对账锁 `tests/admin_config_ui_coverage.rs`）。
 
 use std::sync::Arc;
 
@@ -104,7 +105,9 @@ pub async fn ui_admin_setup(
     view::admin::config_view(&rc, &t)
 }
 
-/// 16 滑块表单（UI 单位：_mb/_min/_hr）。
+/// 配置表单（UI 单位：_mb/_min/_hr；bool/quality 直传）。每个字段对应
+/// `view::admin::config_view` 渲染的一个控件——新增字段须三处同步（控件 + 本表
+/// + 下方 apply），对账锁见 `tests/admin_config_ui_coverage.rs`。
 #[derive(Debug, Deserialize, Default)]
 pub struct SliderForm {
     pub parse_concurrency: Option<u64>,
@@ -118,14 +121,25 @@ pub struct SliderForm {
     pub task_ttl_min: Option<u64>,
     pub zip_max_age_hr: Option<u64>,
     pub task_cleanup_interval_secs: Option<u64>,
+    pub disk_guard_grace_min: Option<u64>,
     pub cover_cache_ttl_min: Option<u64>,
     pub cover_cache_max_size: Option<u64>,
     pub batch_max_songs: Option<u64>,
     pub min_free_disk_mb: Option<u64>,
     pub download_timeout_per_song_min: Option<u64>,
+    pub rate_limit_rps_per_user: Option<u32>,
+    pub rate_limit_burst: Option<u32>,
+    // bool toggle 经隐藏 input 提交字面 "true"/"false"（见 view::admin::toggle）——
+    // 用 String 显式解析，不依赖 serde_urlencoded 的 bool-from-str 行为（避免解析
+    // 失败时 `parse_body` 整体回落 default 致全表单静默 no-op）。
+    pub quality_fallback_enabled: Option<String>,
+    pub quality_fallback_floor: Option<String>,
+    pub resume_enabled: Option<String>,
+    pub url_refresh_budget: Option<u32>,
+    pub stall_secs: Option<u64>,
 }
 
-/// `PUT /ui/admin/config` —— 服务端 load 当前配置 + 覆盖 16 UI 字段（单位换算）+ validate + apply。
+/// `PUT /ui/admin/config` —— 服务端 load 当前配置 + 覆盖 UI 字段（单位换算）+ validate + apply。
 pub async fn ui_admin_config_put(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -136,7 +150,7 @@ pub async fn ui_admin_config_put(
     }
     let f: SliderForm = parse_body(&headers, &body);
 
-    // load 当前配置（保留 UI 未暴露的 4 字段），仅覆盖 16 UI 字段（含单位换算）
+    // load 当前配置，覆盖提交的 UI 字段（含单位换算）；缺省字段保持原值
     let mut rc = (**state.runtime_config.load()).clone();
     if let Some(v) = f.parse_concurrency {
         rc.parse_concurrency = v as usize;
@@ -171,6 +185,9 @@ pub async fn ui_admin_config_put(
     if let Some(v) = f.task_cleanup_interval_secs {
         rc.task_cleanup_interval_secs = v;
     }
+    if let Some(v) = f.disk_guard_grace_min {
+        rc.disk_guard_grace_secs = v * 60;
+    }
     if let Some(v) = f.cover_cache_ttl_min {
         rc.cover_cache_ttl_secs = v * 60;
     }
@@ -185,6 +202,27 @@ pub async fn ui_admin_config_put(
     }
     if let Some(v) = f.download_timeout_per_song_min {
         rc.download_timeout_per_song_secs = v * 60;
+    }
+    if let Some(v) = f.rate_limit_rps_per_user {
+        rc.rate_limit_rps_per_user = v;
+    }
+    if let Some(v) = f.rate_limit_burst {
+        rc.rate_limit_burst = v;
+    }
+    if let Some(v) = f.quality_fallback_enabled {
+        rc.quality_fallback_enabled = v == "true";
+    }
+    if let Some(v) = f.quality_fallback_floor {
+        rc.quality_fallback_floor = v;
+    }
+    if let Some(v) = f.resume_enabled {
+        rc.resume_enabled = v == "true";
+    }
+    if let Some(v) = f.url_refresh_budget {
+        rc.url_refresh_budget = v;
+    }
+    if let Some(v) = f.stall_secs {
+        rc.stall_secs = v;
     }
 
     if let Err(msg) = rc.validate() {

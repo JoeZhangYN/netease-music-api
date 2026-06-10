@@ -1251,6 +1251,63 @@
         color: var(--ink-faint);
         min-width: 32px;
     }
+    /* 布尔开关（toggle）：方形拨片，沿用 vermillion/rule 配色，与 slider 风格一致 */
+    .admin-toggle-wrap {
+        flex: 1;
+        display: flex; align-items: center;
+    }
+    .admin-toggle {
+        position: relative;
+        display: inline-flex;
+        cursor: pointer;
+    }
+    .admin-toggle input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+        width: 0; height: 0;
+        margin: 0;
+    }
+    .admin-toggle-track {
+        width: 42px; height: 18px;
+        background: var(--rule);
+        border: 1px solid var(--rule);
+        position: relative;
+        transition: background .15s;
+        border-radius: 0;
+    }
+    .admin-toggle-track::after {
+        content: "";
+        position: absolute;
+        top: 1px; left: 1px;
+        width: 16px; height: 16px;
+        background: var(--paper);
+        transition: transform .15s;
+    }
+    .admin-toggle input[type="checkbox"]:checked + .admin-toggle-track {
+        background: var(--vermillion);
+        border-color: var(--vermillion);
+    }
+    .admin-toggle input[type="checkbox"]:checked + .admin-toggle-track::after {
+        transform: translateX(24px);
+    }
+    /* 枚举下拉（select）：扁平方框，沿用 vellum/rule 配色 */
+    .admin-select-wrap {
+        flex: 1;
+        display: flex; align-items: center;
+    }
+    .admin-select {
+        flex: 1;
+        padding: 6px 10px;
+        background: var(--vellum-2);
+        border: 1px solid var(--rule);
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 12px;
+        outline: none;
+        cursor: pointer;
+        border-radius: 0;
+    }
+    .admin-select:focus { border-color: var(--vermillion); }
     .admin-login-input {
         width: 100%;
         padding: 10px 0;
