@@ -45,6 +45,21 @@ pub struct RuntimeConfig {
     /// plan §5.3）。总 CDN/refresh 请求 ≤ (url_refresh_budget + 1) × max_attempts。
     /// 保守默认 2，防 refresh × retry 相乘放大风控。default = 2。
     pub url_refresh_budget: u32,
+
+    // PR-R0 — stall watchdog（plan §9 可选行）。
+    /// 单 attempt 内「无任何字节进展」的超时阈值（秒）。下载流连续 `stall_secs`
+    /// 收不到新字节 → 判定连接挂死 → emit `DownloadStalled` → attempt 以「可 refresh」
+    /// 失败收场，FSM 主动转 refresh 换新链接续传（受 `url_refresh_budget` 约束 #23，
+    /// 非无限等）。与 reqwest read_timeout(60s) 正交——stall 更早感知且转 refresh 而非
+    /// 单纯 Timeout 瞬态重试。`#[serde(default)]` 兼容旧无此字段的 runtime_config.json。
+    /// 保守默认 30s（短网络抖动不误判，慢但有进展不触发）。
+    #[serde(default = "default_stall_secs")]
+    pub stall_secs: u64,
+}
+
+/// `stall_secs` 的 serde 默认值（旧配置文件无此字段时回填）。
+const fn default_stall_secs() -> u64 {
+    30
 }
 
 impl Default for RuntimeConfig {
@@ -83,6 +98,7 @@ impl Default for RuntimeConfig {
 
             resume_enabled: true,
             url_refresh_budget: 2,
+            stall_secs: default_stall_secs(),
         }
     }
 }
@@ -180,6 +196,11 @@ impl RuntimeConfig {
         // 0 合法 = 续字节但不 refresh url（链接过期即整 Job 失败，等同关 refresh）。
         if self.url_refresh_budget > 10 {
             return Err("url_refresh_budget must be 0..=10".into());
+        }
+        // stall_secs：min 5s（短抖动不误判），max 600s。stall 触发转 refresh，受
+        // url_refresh_budget 约束（不会无界放大请求）。
+        if self.stall_secs < 5 || self.stall_secs > 600 {
+            return Err("stall_secs must be 5..=600".into());
         }
         Ok(())
     }

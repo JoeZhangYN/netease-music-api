@@ -31,6 +31,12 @@ pub enum HttpFailureKind {
     /// 4xx 其它 — 永久错，不重试。
     #[error("permanent {status}")]
     Permanent4xx { status: u16 },
+    /// PR-R0 stall watchdog：单 attempt 内 `stall_secs` 无任何字节进展（连接挂死
+    /// 但未 reqwest-timeout）。**不** `with_retry` 重试（旧 url 大概率继续挂），而是
+    /// 升级到 FSM refresh 取新链接续传（`is_url_refreshable=true`，受 url_refresh_budget
+    /// 约束 #23）。携 `secs` = 触发阈值，仅供日志。
+    #[error("stalled (no progress for {secs}s)")]
+    Stalled { secs: u64 },
 }
 
 impl HttpFailureKind {
@@ -41,7 +47,11 @@ impl HttpFailureKind {
             | HttpFailureKind::Timeout
             | HttpFailureKind::Server5xx { .. }
             | HttpFailureKind::Quota { .. } => true,
-            HttpFailureKind::AuthExpired | HttpFailureKind::Permanent4xx { .. } => false,
+            // Stalled: 不在 per-attempt with_retry 内重试（同 url 大概率继续挂），
+            // propagate 给 driver 升级 refresh（is_url_refreshable=true）。
+            HttpFailureKind::AuthExpired
+            | HttpFailureKind::Permanent4xx { .. }
+            | HttpFailureKind::Stalled { .. } => false,
         }
     }
 
@@ -60,6 +70,8 @@ impl HttpFailureKind {
             HttpFailureKind::AuthExpired => true,
             // 链接过期典型码；400/405/416 等非链接 4xx 不在内（→ 致命快速失败 #20）。
             HttpFailureKind::Permanent4xx { status } => matches!(status, 403 | 404 | 410),
+            // PR-R0：stall = 连接挂死，换新链接重连可能解决 → 升级 refresh（受 budget #23）。
+            HttpFailureKind::Stalled { .. } => true,
             HttpFailureKind::Network(_)
             | HttpFailureKind::Timeout
             | HttpFailureKind::Server5xx { .. }
@@ -75,7 +87,8 @@ impl HttpFailureKind {
             | HttpFailureKind::Timeout
             | HttpFailureKind::Server5xx { .. }
             | HttpFailureKind::AuthExpired
-            | HttpFailureKind::Permanent4xx { .. } => None,
+            | HttpFailureKind::Permanent4xx { .. }
+            | HttpFailureKind::Stalled { .. } => None,
         }
     }
 
@@ -162,6 +175,8 @@ mod tests {
         assert!(HttpFailureKind::Quota { retry_after: None }.is_retryable());
         assert!(!HttpFailureKind::AuthExpired.is_retryable());
         assert!(!HttpFailureKind::Permanent4xx { status: 404 }.is_retryable());
+        // PR-R0: stall 不在 per-attempt 重试（升级 refresh）。
+        assert!(!HttpFailureKind::Stalled { secs: 30 }.is_retryable());
     }
 
     // PR-R1 §5.2 — is_url_refreshable 与 is_retryable 二元组穷举。
@@ -185,6 +200,8 @@ mod tests {
             (HttpFailureKind::Permanent4xx { status: 405 }, false, false),
             (HttpFailureKind::Permanent4xx { status: 416 }, false, false),
             (HttpFailureKind::Permanent4xx { status: 451 }, false, false),
+            // PR-R0 stall：不 retryable（with_retry 不打），但 refresh 可解（换链接重连）
+            (HttpFailureKind::Stalled { secs: 30 }, false, true),
         ];
         for (kind, want_retry, want_refresh) in cases {
             assert_eq!(

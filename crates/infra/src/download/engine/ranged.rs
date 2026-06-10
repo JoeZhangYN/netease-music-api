@@ -197,11 +197,8 @@ pub(super) async fn download_adaptive(
     let status = resp.status().as_u16();
 
     if status == 206 {
-        let first_data = resp
-            .bytes()
-            .await
-            .map_err(|e| HttpFailureKind::from_reqwest(&e))?
-            .to_vec();
+        // PR-R0：probe 首 chunk 也流式读 + per-next stall 超时（与 fetch_range 同原语）。
+        let first_data = stream_body_with_stall(resp, config.stall_secs, "range probe").await?;
 
         if let Some(ref cb) = on_progress {
             cb(first_data.len() as u64, content_length);
@@ -225,10 +222,17 @@ pub(super) async fn download_adaptive(
         .map_err(|e| io_fatal(&e))
     } else if status == 200 || status == 203 {
         // 服务端不支持 Range → 全量 stream（不续传）。清掉 sidecar 避免 stale。
+        // PR-R0：stream_response_to_file 直接返 HttpFailureKind——stall 的 `Stalled`
+        // 透传给 driver 转 refresh（io_fatal 会把它降级成 Network 丢失 refresh 语义）。
         let _ = std::fs::remove_file(&sidecar_path);
-        stream_response_to_file(resp, file_path, content_length, on_progress)
-            .await
-            .map_err(|e| io_fatal(&e))
+        stream_response_to_file(
+            resp,
+            file_path,
+            content_length,
+            on_progress,
+            config.stall_secs,
+        )
+        .await
     } else {
         let _ = std::fs::remove_file(&sidecar_path);
         download_single_stream(client, url, file_path, content_length, on_progress, config).await
@@ -347,6 +351,7 @@ async fn download_remaining_and_pwrite(
         let part_path = file_path.to_path_buf();
         let sidecar = sidecar_path.to_path_buf();
         let manifest = Arc::clone(&manifest);
+        let stall_secs = config.stall_secs; // PR-R0：移进 spawn 闭包（config 非 'static）
 
         handles.push(tokio::spawn(async move {
             let expected_len = chunk.len();
@@ -354,8 +359,10 @@ async fn download_remaining_and_pwrite(
             //   is_retryable 决策——4xx 永久错（403/404/410 等 CDN 链接过期 / 鉴权
             //   失效）立即 propagate 不浪费 retry budget，避免"卡 90% 一个 chunk
             //   反复重试 N 次"用户感知。short read 仍归 Network 视作瞬态。
+            // PR-R0：stall（per-chunk 字节无进展超时）由 fetch_range 内部检测，返 Stalled
+            //   （is_url_refreshable → driver 转 refresh）。
             let result: Result<Vec<u8>, HttpFailureKind> = with_retry(&policy, || async {
-                let data = fetch_range(&client, &url, chunk.start, chunk.end).await?;
+                let data = fetch_range(&client, &url, chunk.start, chunk.end, stall_secs).await?;
                 if (data.len() as u64) == expected_len {
                     Ok(data)
                 } else {
@@ -472,17 +479,65 @@ fn verify_assembled_size(file_path: &Path, content_length: u64) -> Result<(), Ap
     Ok(())
 }
 
+/// PR-R0 stall watchdog 共享原语：把响应 body **流式**读入 `Vec<u8>`，每次 `next()`
+/// （一段字节进展）包 `stall_secs` 超时。连续 `stall_secs` 收不到新字节 → emit
+/// `DownloadStalled` + 返 `Stalled`（is_url_refreshable → driver 转 refresh）。判定基于
+/// 字节进展而非整 body 完成（慢但有进展不触发，约束 #3）。`stall_secs == 0` → 禁用
+/// watchdog（一次性收 body）。被 ranged chunk fetch（`fetch_range`）与 probe 首 chunk 共用。
+async fn stream_body_with_stall(
+    resp: reqwest::Response,
+    stall_secs: u64,
+    label: &str,
+) -> Result<Vec<u8>, HttpFailureKind> {
+    use std::time::Duration;
+
+    use futures::StreamExt;
+
+    let mut buf = Vec::new();
+    let mut stream = resp.bytes_stream();
+    let stall_window = Duration::from_secs(stall_secs);
+    loop {
+        let next = if stall_secs == 0 {
+            stream.next().await
+        } else {
+            match tokio::time::timeout(stall_window, stream.next()).await {
+                Ok(next) => next,
+                Err(_elapsed) => {
+                    warn!(
+                        event = %netease_kernel::observability::LogEvent::DownloadStalled,
+                        stall_secs,
+                        got = buf.len(),
+                        label,
+                        "range stalled — no byte progress within window, escalating to refresh"
+                    );
+                    return Err(HttpFailureKind::Stalled { secs: stall_secs });
+                }
+            }
+        };
+        match next {
+            Some(Ok(bytes)) => buf.extend_from_slice(&bytes),
+            Some(Err(e)) => return Err(HttpFailureKind::from_reqwest(&e)),
+            None => break,
+        }
+    }
+    Ok(buf)
+}
+
 /// PR-K A: 返 `HttpFailureKind` 让上游 with_retry 按 is_retryable 直接决策。
 /// - 200/206：成功路径，返 Vec<u8>
 /// - 4xx 永久错（403/404/410 等 CDN 链接过期 / 鉴权失效）：Permanent4xx 不重试
 /// - 5xx：Server5xx 重试
 /// - 401 + body / 网易云 -301：AuthExpired 不重试
 /// - 网络层错（is_timeout / is_body / is_decode）：Network/Timeout 重试
+///
+/// PR-R0 stall watchdog：成功路径经 `stream_body_with_stall` 流式读 + per-next 超时
+/// （慢但有进展不触发，约束 #3）。`stall_secs == 0` → 禁用 watchdog。
 async fn fetch_range(
     client: &Client,
     url: &str,
     start: u64,
     end: u64,
+    stall_secs: u64,
 ) -> Result<Vec<u8>, HttpFailureKind> {
     let resp = client
         .get(url)
@@ -492,20 +547,20 @@ async fn fetch_range(
         .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
     let status = resp.status();
-    let body_bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
-    // 成功路径：206 (Range OK) 或 200 (服务端可能不支持 Range 退化全量)
-    if status == reqwest::StatusCode::PARTIAL_CONTENT || status == reqwest::StatusCode::OK {
-        return Ok(body_bytes.to_vec());
+    // 失败路径：先读 body peek 分类（小，无 stall 风险）。
+    if status != reqwest::StatusCode::PARTIAL_CONTENT && status != reqwest::StatusCode::OK {
+        let body_bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
+        let peek = &body_bytes[..body_bytes.len().min(200)];
+        return Err(HttpFailureKind::from_response(status, peek)
+            .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status} (range)"))));
     }
 
-    // 失败路径：按 status 分类，让 is_retryable 决策（4xx 永久错不再被当 short read 重试）
-    let peek = &body_bytes[..body_bytes.len().min(200)];
-    Err(HttpFailureKind::from_response(status, peek)
-        .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status} (range)"))))
+    // 成功路径（206/200）：流式读 + per-next stall 超时（PR-R0）。
+    stream_body_with_stall(resp, stall_secs, "range chunk").await
 }
 
 #[cfg(test)]

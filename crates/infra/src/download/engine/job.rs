@@ -313,6 +313,9 @@ fn kind_to_download_error(kind: &HttpFailureKind) -> DownloadError {
         HttpFailureKind::Timeout => DownloadError::Timeout { secs: 0 },
         HttpFailureKind::Quota { .. } => DownloadError::Other("rate limited".into()),
         HttpFailureKind::Network(s) => DownloadError::Network(s.clone()),
+        // PR-R0：stall 只会在 is_url_refreshable 分支被 driver 截获转 refresh；
+        // 落到此「致命映射」仅当 refresh 预算耗尽后再次 stall（穷举完备防退化）。
+        HttpFailureKind::Stalled { secs } => DownloadError::Timeout { secs: *secs },
     }
 }
 

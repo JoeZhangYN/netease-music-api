@@ -57,6 +57,12 @@ pub struct DownloadConfig {
     /// resume_enabled 也只续字节、链接过期即失败）。调用方（handler/worker）按
     /// 每首歌构造并 `clone` config 替换此字段；`from_runtime_config` 默认 `None`。
     pub refresher: Option<Arc<dyn UrlRefresher>>,
+
+    // PR-R0 — stall watchdog。
+    /// 单 attempt 内「无字节进展」超时阈值（秒）。下载流连续此秒数收不到新字节 →
+    /// emit `DownloadStalled` + 返回 `HttpFailureKind::Stalled`（is_url_refreshable=true）
+    /// → FSM 转 refresh 续传（受 url_refresh_budget 约束 #23）。从 RuntimeConfig 映射。
+    pub stall_secs: u64,
 }
 
 // `Arc<dyn UrlRefresher>` 无 Debug；手写 Debug 把它显示为 present/absent 占位
@@ -72,6 +78,7 @@ impl std::fmt::Debug for DownloadConfig {
             .field("resume_enabled", &self.resume_enabled)
             .field("url_refresh_budget", &self.url_refresh_budget)
             .field("refresher", &self.refresher.is_some())
+            .field("stall_secs", &self.stall_secs)
             .finish_non_exhaustive()
     }
 }
@@ -88,6 +95,7 @@ impl Default for DownloadConfig {
             resume_enabled: true,
             url_refresh_budget: 2,
             refresher: None,
+            stall_secs: 30,
         }
     }
 }
@@ -115,6 +123,7 @@ impl DownloadConfig {
             resume_enabled: rc.resume_enabled,
             url_refresh_budget: rc.url_refresh_budget,
             refresher: None,
+            stall_secs: rc.stall_secs,
         }
     }
 }

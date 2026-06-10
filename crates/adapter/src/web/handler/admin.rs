@@ -267,7 +267,8 @@ pub async fn admin_get_config_schema(
             { "name": "quality_fallback_enabled",         "min": null,        "max": null,        "default": true,          "unit": "bool"   },
             { "name": "quality_fallback_floor",           "min": null,        "max": null,        "default": "standard",    "unit": "quality"},
             { "name": "resume_enabled",                   "min": null,        "max": null,        "default": true,          "unit": "bool"   },
-            { "name": "url_refresh_budget",               "min": 0,           "max": 10,          "default": 2,             "unit": null     }
+            { "name": "url_refresh_budget",               "min": 0,           "max": 10,          "default": 2,             "unit": null     },
+            { "name": "stall_secs",                       "min": 5,           "max": 600,         "default": 30,            "unit": "secs"   }
         ]
     });
     APIResponse::success(schema, "ok")

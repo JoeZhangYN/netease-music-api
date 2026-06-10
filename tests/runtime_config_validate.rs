@@ -248,6 +248,36 @@ fn url_refresh_budget_bounds() {
     assert!(c.validate().is_err(), "url_refresh_budget=11 must be Err");
 }
 
+#[test]
+fn stall_secs_bounds() {
+    let mut c = RuntimeConfig::default();
+    c.stall_secs = 4;
+    assert!(c.validate().is_err(), "stall_secs=4 must be Err (< 5)");
+    c.stall_secs = 5;
+    assert!(c.validate().is_ok(), "stall_secs=5 must be Ok");
+    c.stall_secs = 600;
+    assert!(c.validate().is_ok(), "stall_secs=600 must be Ok");
+    c.stall_secs = 601;
+    assert!(c.validate().is_err(), "stall_secs=601 must be Err (> 600)");
+}
+
+/// PR-R0：旧 runtime_config.json 无 `stall_secs` 字段 → serde default 回填 30。
+#[test]
+fn stall_secs_serde_default_for_legacy_config() {
+    // 构造一份缺 stall_secs 的 JSON（模拟升级前的旧配置文件）。
+    let mut value = serde_json::to_value(RuntimeConfig::default()).unwrap();
+    value.as_object_mut().unwrap().remove("stall_secs");
+    let json = serde_json::to_string(&value).unwrap();
+    assert!(!json.contains("stall_secs"), "test fixture must omit field");
+
+    let parsed: RuntimeConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        parsed.stall_secs, 30,
+        "missing stall_secs must default to 30"
+    );
+    parsed.validate().expect("defaulted config must be valid");
+}
+
 // ---------- 序列化 round-trip：load_or_default 不丢字段 ----------
 
 #[test]
@@ -276,6 +306,7 @@ fn json_round_trip_preserves_all_fields() {
         quality_fallback_floor: "lossless".into(),
         resume_enabled: false,
         url_refresh_budget: 3,
+        stall_secs: 45,
     };
 
     let json = serde_json::to_string(&cfg).unwrap();
@@ -304,6 +335,7 @@ fn json_round_trip_preserves_all_fields() {
     assert_eq!(parsed.quality_fallback_floor, "lossless");
     assert!(!parsed.resume_enabled);
     assert_eq!(parsed.url_refresh_budget, 3);
+    assert_eq!(parsed.stall_secs, 45);
 
     parsed.validate().expect("round-trip 后仍合法");
 }
@@ -377,6 +409,7 @@ proptest! {
         grace in 60u64..=3600,
         rps in 0u32..=1000,
         burst in 0u32..=10000,
+        stall in 5u64..=600,
     ) {
         // burst 必须 >= rps（当 rps>0 时），否则 validate fail
         let effective_burst = if rps > 0 { burst.max(rps) } else { burst };
@@ -404,6 +437,7 @@ proptest! {
             quality_fallback_floor: "standard".into(),
             resume_enabled: true,
             url_refresh_budget: 2,
+            stall_secs: stall,
         };
         prop_assert!(cfg.validate().is_ok());
     }

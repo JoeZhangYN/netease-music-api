@@ -36,6 +36,7 @@ v4 断点续传（PR-R1~R5 完成）：`DownloadJob FSM with UrlRefresher + Rang
 | 22 | 续传字节态 SOT + 写序不变量（manifest 永远落后真实字节） | single_stream 字节态 = `.part` 文件长度（顺序 append，R2）；ranged 字节态 = `<part>.json` sidecar `PartManifest`（稀疏 pwrite，R3）。**严格写序（崩溃一致性核心）**：① pwrite chunk → ② flush → ③ `record_chunk`+`persist`（原子 temp+rename），绝不反序——崩溃在 ①②③ 间 manifest 缺记已写 chunk → resume 安全重下（幂等）。续写原语禁无条件截断（`truncate(true)`/`File::create`），反退化锁 `crates/infra/tests/no_truncate_in_resume_primitives.rs` | manifest 超前于真实字节（先记后写）→「以为写了其实没写」损坏；失败 `truncate` 抹盘整文件重来 (pre-R2/R3) |
 | 23 | refresh 有界预算 + 总请求上界 | FSM driver `job.rs::run_download_job` 持 `url_refresh_budget`（`RuntimeConfig`，默认 2，validate 0..=10）；per-attempt 网络重试（`with_retry` #17/#21）与 per-job refresh 预算**正交**，总 CDN/refresh 请求 ≤ `(url_refresh_budget+1) × max_attempts`（regression `refresh_budget_bounds_total_requests` 断言） | refresh × retry 相乘放大风控（无界 refresh 击穿 #18 CDN 护栏）|
 | 24 | 下载 URL 线性一次性消耗（typestate by-value） | `DownloadUrl::consume(self) -> String`（`music_info.rs`）by-value 移走句柄；job 边界 `download_file_ranged` / `run_download_job` 入参为 `DownloadUrl` by-value（非裸 `&str`，PR-T1 拆桥）；driver 持 `next_url: Option<DownloadUrl>`，每 attempt `take()`+`consume()` 线性消耗，非终态再循环必经 refresher 把新句柄塞回——「失败后复用旧 url」结构性不可达。`compile_fail` doc-test 锚在 `DownloadUrl::consume` 文档（`music_info.rs`，`cargo test --doc` 执行）见证 move 后再用编译错 | 同一 url 句柄被并行/重复消耗 (AP-005)；失败后复用旧 url 重试 (C-4/AP-003，pre-T1 SizeMismatch 后误用 stale url 的活样本已修) |
+| 25 | stall watchdog——字节进展超时主动转 refresh（非无限等） | 下载流每次 `stream.next()`（一次字节进展）包 `stall_secs` 超时（single_stream `stream_resp_to_file_inner` + ranged `stream_body_with_stall`，PR-R0）。连续 `stall_secs` 无新字节 → emit `LogEvent::DownloadStalled` + 返 `HttpFailureKind::Stalled`（`is_url_refreshable=true` / `is_retryable=false`，穷尽 match 反退化）→ FSM driver 转 refresh 换新链接续传，受 `url_refresh_budget` 约束（#23 总请求上界不被击穿）。`stall_secs` 走 `RuntimeConfig`（validate 5..=600，默认 30）→ `DownloadConfig`（#11）→ `/admin/config/schema` slider（#9）。判定基于**字节进展**而非整体耗时/chunk 完成（慢但有进展不触发）。regression `tests/stall_watchdog.rs`（raw-TCP 中途挂死 + tracing 捕获 emit + budget 上界） | 连接中途挂死无限等到外层 `download_timeout_per_song_secs`（300s）才超时；stall 误判为 chunk 未完成反复重下 |
 
 ## 快速定位
 
@@ -60,22 +61,16 @@ v4 断点续传（PR-R1~R5 完成）：`DownloadJob FSM with UrlRefresher + Rang
 | 前端 | Maud SSR (`view/`) + htmx 区域 swap；CSS/JS/htmx = `templates/{app.css,app.js,vendor/htmx.min.js}` 编译时内联 | — |
 | 技能黑名单 | `.claude/skills.yaml` | — |
 
-## ctx 内容索引
+## 检索工具对应（原「ctx 内容索引」节已退役）
 
-| 层级 | 场景 | ctx 查询 |
-|------|------|----------|
-| L1 | 架构总览 | `ARCHITECTURE.md` |
-| L2 | 领域模型 | `references/domain-model.md` |
-| L2 | 端口 trait | `references/domain-port.md` |
-| L2 | 领域服务 | `references/domain-service.md` |
-| L2 | 网易云 API | `references/infra-netease.md` |
-| L2 | 持久化 | `references/infra-persistence.md` |
-| L2 | 下载引擎 | `references/infra-download.md` |
-| L2 | 封面缓存 | `references/infra-cache.md` |
-| L2 | Web 层 | `references/adapter-web.md` |
-| L2 | Handler | `references/adapter-handler.md` |
-| L2 | 共享层 | `references/shared.md` |
-| L2 | 入口 | `references/entry.md` |
+> 原段来自旧版全局模板（claude-workbench `assets/global/templates/CLAUDE.md` @3807b4fc，2026-01-28）的项目初始化填充（b9f022b，2026-02-15）；上游模板后续演化已删该段（改为「导航工具」意图分发表），本项目未随升级成遗迹，且其「场景→文档」映射与上方「快速定位」表文档列完全重复。`ctx` 工具本身仍在役（`~/.local/bin/ctx` 精准文件切片），退役的是静态层级索引表这一形态。
+
+| 工具 | 强项 | 适用场景 |
+|------|------|---------|
+| Grep（ripgrep） | 真搜——精确文本/正则，字面量零漏报 | 已知确切符号名/字符串/错误文案，枚举全部出现点 |
+| `dream search` | 高召回——语义/自然语言检索，措辞不同也召回 | 只知道业务概念/不变量描述，不知道代码措辞 |
+| codegraph MCP | 快定位——符号图谱（context/callers/callees/impact） | 「X 怎么工作 / 谁调 X / 改 X 波及什么」结构性问题 |
+| `ctx <file> [--symbol fn:<name>]` | 精准切片——按符号/行范围/章节提取 | 上面三者拿到候选路径后的精读步骤 |
 
 ## 关键类型
 

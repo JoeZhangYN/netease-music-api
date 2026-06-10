@@ -33,7 +33,11 @@ pub struct DownloadConfig {
     pub resume_enabled: bool,         // R4, 默认 true; false → driver 退化单次尝试
     pub url_refresh_budget: u32,      // R4, 默认 2 (validate 0..=10), 不变量 #23
     pub refresher: Option<Arc<dyn UrlRefresher>>, // R4, None → 退化; 手写 Debug 防 URL 入日志 AP-004
+    pub stall_secs: u64,              // R0, 默认 30 (validate 5..=600), 不变量 #25
 }
+// PR-R0 stall watchdog: 下载流每次 stream.next() (字节进展) 包 stall_secs 超时, 连续
+//   无进展 → DownloadStalled + HttpFailureKind::Stalled (is_url_refreshable) → driver 转
+//   refresh (受 url_refresh_budget 约束 #23); 判定基于字节进展非整体耗时 (慢但有进展不触发)
 // from_runtime_config(&rc, state.in_flight.clone()) 单源构造 (不变量 #11);
 // in_flight/refresher 不来自 RuntimeConfig, 由 handler 注入 (in_flight 从 AppState Arc 克隆,
 // refresher 每曲构造 MusicApiRefresher); resume_enabled/url_refresh_budget 来自 RuntimeConfig

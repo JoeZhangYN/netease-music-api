@@ -68,19 +68,29 @@ pub(super) async fn download_single_stream(
         RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
 
     with_retry(&policy, || async {
-        download_stream_once(client, url, file_path, content_length, &on_progress).await
+        download_stream_once(
+            client,
+            url,
+            file_path,
+            content_length,
+            &on_progress,
+            config.stall_secs,
+        )
+        .await
     })
     .await
 }
 
 /// 返 `HttpFailureKind`：HTTP 状态经 `from_response` 分类（链接级 4xx → Permanent4xx /
-/// AuthExpired，供 driver refresh 判定）；本地 IO 错经 `classify` 归瞬态。
+/// AuthExpired，供 driver refresh 判定）；本地 IO 错经 `classify` 归瞬态；stall 经
+/// `stream_resp_to_file_inner` 直接返 `Stalled`（is_url_refreshable → driver 转 refresh）。
 async fn download_stream_once(
     client: &Client,
     url: &str,
     file_path: &Path,
     content_length: u64,
     on_progress: &Option<ProgressCallback>,
+    stall_secs: u64,
 ) -> Result<(), HttpFailureKind> {
     // PR-R2: 每次 attempt 重新读 `.part` 长度——retry-after-partial 时从已写处续，
     // 不重下已落盘字节。offset 在闭包内读保证 with_retry 多 attempt 各自看到最新长度。
@@ -137,9 +147,9 @@ async fn download_stream_once(
         effective_offset,
         on_progress,
         "",
+        stall_secs,
     )
     .await
-    .map_err(classify)
 }
 
 pub(super) async fn stream_response_to_file(
@@ -147,7 +157,8 @@ pub(super) async fn stream_response_to_file(
     file_path: &Path,
     content_length: u64,
     on_progress: Option<ProgressCallback>,
-) -> Result<(), AppError> {
+    stall_secs: u64,
+) -> Result<(), HttpFailureKind> {
     // probe-response path（ranged.rs 200/203 降级）始终从 0 全量写——probe 不发
     // Range offset，故无续传基线。
     stream_resp_to_file_inner(
@@ -157,6 +168,7 @@ pub(super) async fn stream_response_to_file(
         0,
         &on_progress,
         " (probe-response path)",
+        stall_secs,
     )
     .await
 }
@@ -167,6 +179,13 @@ pub(super) async fn stream_response_to_file(
 /// PR-R2: `resume_offset` > 0 时 append 续写（不截断已落盘前缀），进度回调以
 /// `resume_offset` 为基线（前端进度不倒退），短读校验比对**整文件**最终长度
 /// 而非本次响应字节（206 响应 content-length 仅为后缀长度）。
+///
+/// PR-R0 stall watchdog：每个 `stream.next()`（一次字节进展）包 `stall_secs` 超时。
+/// 连续 `stall_secs` 收不到新字节 → emit `DownloadStalled` + 返 `HttpFailureKind::Stalled`
+/// （is_url_refreshable → driver 转 refresh 续传）。判定基于**字节进展**而非整体耗时——
+/// 慢但持续有 chunk 抵达不触发（每抵达一个 chunk 计时器重置）。本地 IO / short-read
+/// 错经 `classify` 归瞬态 `Network`（保持既有行为）。
+#[allow(clippy::too_many_arguments)]
 async fn stream_resp_to_file_inner(
     resp: reqwest::Response,
     file_path: &Path,
@@ -174,7 +193,10 @@ async fn stream_resp_to_file_inner(
     resume_offset: u64,
     on_progress: &Option<ProgressCallback>,
     short_read_label: &str,
-) -> Result<(), AppError> {
+    stall_secs: u64,
+) -> Result<(), HttpFailureKind> {
+    use std::time::Duration;
+
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
@@ -197,7 +219,11 @@ async fn stream_resp_to_file_inner(
             .append(true)
             .open(file_path)
             .await
-            .map_err(|e| AppError::Download(format!("Open .part for append failed: {e}")))?
+            .map_err(|e| {
+                classify(AppError::Download(format!(
+                    "Open .part for append failed: {e}"
+                )))
+            })?
     } else {
         // 全新 / 降级全量：截断创建。
         // resume-truncate-gate: exempt — 唯一合法首次创建站点（resume_offset==0：全新下载
@@ -205,17 +231,35 @@ async fn stream_resp_to_file_inner(
         // tests/no_truncate_in_resume_primitives.rs 禁此外的 File::create/truncate(true) 复活。
         tokio::fs::File::create(file_path)
             .await
-            .map_err(|e| AppError::Download(format!("Create file failed: {e}")))?
+            .map_err(|e| classify(AppError::Download(format!("Create file failed: {e}"))))?
     };
 
     let mut downloaded: u64 = resume_offset;
     let mut stream = resp.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Download(format!("Stream error: {e}")))?;
+    let stall_window = Duration::from_secs(stall_secs);
+    loop {
+        // PR-R0：每次取下一个 chunk（一次字节进展）包 stall 超时。无进展 stall_secs →
+        // stall（is_url_refreshable → driver refresh）。慢但有进展每次都重置此计时窗。
+        let next = match tokio::time::timeout(stall_window, stream.next()).await {
+            Ok(next) => next,
+            Err(_elapsed) => {
+                tracing::warn!(
+                    event = %netease_kernel::observability::LogEvent::DownloadStalled,
+                    stall_secs,
+                    downloaded,
+                    total,
+                    "download stalled — no byte progress within window, escalating to refresh"
+                );
+                return Err(HttpFailureKind::Stalled { secs: stall_secs });
+            }
+        };
+        let Some(chunk) = next else { break };
+        let chunk =
+            chunk.map_err(|e| classify(AppError::Download(format!("Stream error: {e}"))))?;
         file.write_all(&chunk)
             .await
-            .map_err(|e| AppError::Download(format!("Write error: {e}")))?;
+            .map_err(|e| classify(AppError::Download(format!("Write error: {e}"))))?;
         downloaded += chunk.len() as u64;
         if let Some(ref cb) = on_progress {
             if total > 0 {
@@ -226,13 +270,13 @@ async fn stream_resp_to_file_inner(
 
     file.flush()
         .await
-        .map_err(|e| AppError::Download(format!("Flush error: {e}")))?;
+        .map_err(|e| classify(AppError::Download(format!("Flush error: {e}"))))?;
 
     // PR-3 / PR-R2: short-read detection 比对**整文件**最终长度（含续传前缀）。
     if total > 0 && downloaded != total {
-        return Err(AppError::Download(format!(
+        return Err(classify(AppError::Download(format!(
             "Stream short read{short_read_label}: got {downloaded} of {total} bytes"
-        )));
+        ))));
     }
 
     Ok(())

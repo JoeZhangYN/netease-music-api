@@ -107,10 +107,13 @@ impl HttpClient {
             HttpFailureKind::Quota { retry_after } => {
                 AppError::RateLimited(retry_after.map(|d| d.as_secs()))
             }
+            // Stalled 是下载侧 watchdog 专用（解析侧响应小、不流式，理论不达）；
+            // 穷举完备归 Api 错（与其它瞬态/永久错一致字符串化）。
             other @ (HttpFailureKind::Network(_)
             | HttpFailureKind::Timeout
             | HttpFailureKind::Server5xx { .. }
-            | HttpFailureKind::Permanent4xx { .. }) => {
+            | HttpFailureKind::Permanent4xx { .. }
+            | HttpFailureKind::Stalled { .. }) => {
                 AppError::Api(format!("HTTP request failed: {other}"))
             }
         })

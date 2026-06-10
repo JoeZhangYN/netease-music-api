@@ -24,7 +24,7 @@ pub enum LogEvent {
     DownloadFailed,
     DownloadCancelled,
     DownloadTimeout,
-    DownloadStalled, // PR-8 stall watchdog will emit this
+    DownloadStalled, // PR-R0 stall watchdog: per-byte-progress 超时无进展 → 转 refresh
     DownloadRetry,
     DownloadCacheHit,
     DownloadPartFileResumed, // PR-8

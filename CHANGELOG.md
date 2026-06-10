@@ -57,7 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     attempt（多一次 refresh 往返）→ 现采用本次 refresh 的新句柄全量重来，省一次 refresh。
     compile_fail doc-test (`tests/contract_download_link.rs::c4_consume_is_linear_move`) 见证
     move 后再用编译错。
-  - regression：`tests/{ranged_resume,refresh_resume}.rs` + `engine_regression.rs::single_stream_resumes_from_part_len`。
+  - **R0 stall watchdog（不变量 #25）**：下载流每次 `stream.next()`（一次字节进展）包 `stall_secs`
+    超时（single_stream `stream_resp_to_file_inner` + ranged `stream_body_with_stall` 共享原语）。
+    连续 `stall_secs` 无新字节（连接中途挂死）→ emit `LogEvent::DownloadStalled` + 新增
+    `HttpFailureKind::Stalled`（`is_url_refreshable=true`/`is_retryable=false`）→ FSM 主动转 refresh
+    换新链接续传，受 `url_refresh_budget` 约束（#23 不被击穿），非无限等到外层 300s 超时。判定基于
+    **字节进展**而非整体耗时（慢但有进展不触发）。`stall_secs` 走 `RuntimeConfig`（validate 5..=600，
+    默认 30）→ `DownloadConfig`（#11）→ `/admin/config/schema` slider（#9），admin 面板实时可调。
+    regression `tests/stall_watchdog.rs`（raw-TCP 中途挂死 + tracing 捕获 emit + budget 上界）。
+  - regression：`tests/{ranged_resume,refresh_resume,stall_watchdog}.rs` + `engine_regression.rs::single_stream_resumes_from_part_len`。
 - **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
   `templates/index.html`（2813 行 jQuery 单页，`include_str!` 整体嵌入）拆为：服务端 Maud
   视图层 `crates/adapter/src/web/view/`（`page_shell` 首屏 + 各区域 HTML 片段）+ htmx 片段
