@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-06-10
+
 ### Changed
 - **typed-outcome-uplift：`do_single_download` String 错误 → typed + `DownloadResult` →
   `DownloadOutcome`**（tech-debt 扫描唯一成立的代码真阳）—— 两处「注释约定 + 约定式 unwrap」
@@ -750,7 +752,8 @@ embed-assets fast-follow patch。主服务行为无变化。
 Initial Rust/Axum rewrite of the Netease Cloud Music API tool.
 DDD + hexagonal architecture; jQuery + APlayer frontend.
 
-[Unreleased]: https://github.com/JoeZhangYN/netease-music-api/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/JoeZhangYN/netease-music-api/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/JoeZhangYN/netease-music-api/compare/v3.0.4...v4.0.0
 [3.0.1]: https://github.com/JoeZhangYN/netease-music-api/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/JoeZhangYN/netease-music-api/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/JoeZhangYN/netease-music-api/releases/tag/v2.0.0
