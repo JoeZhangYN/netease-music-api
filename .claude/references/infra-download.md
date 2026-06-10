@@ -44,11 +44,13 @@ pub fn download_client() -> &'static Client;
 pub type ProgressCallback = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 pub async fn download_file_ranged(
-    client: &Client, url: &str, file_path: &Path,
+    client: &Client, url: DownloadUrl, file_path: &Path,   // PR-T1: url by-value (不变量 #24)
     content_length_hint: u64,
     on_progress: Option<ProgressCallback>,
     config: &DownloadConfig,
 ) -> Result<(), AppError>;
+// PR-T1: url 入参为 DownloadUrl by-value (非裸 &str)——唯一消耗点拿句柄所有权,
+//   沿调用链 move 到 driver 的 consume(self) 线性消耗 (编译期防 C-4/AP-005 复用)
 // 内嵌 FSM driver run_download_job (R4 方案 A): 持 InFlightGuard 横跨整个 Job
 // (含 refresh 环); 成功后 atomic rename + 删 sidecar manifest
 // max_retries 次 per-attempt 网络重试 (with_retry, 指数退避 [500,1000,2000,4000,8000]ms);

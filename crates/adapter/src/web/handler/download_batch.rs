@@ -576,7 +576,9 @@ async fn batch_download_worker(
             Duration::from_secs(download_timeout),
             download_file_ranged(
                 client,
-                music_info.download_url.as_str(),
+                // PR-T1：消耗点拿 DownloadUrl 所有权。clone 句柄交给唯一消耗点——
+                // `music_info` 后续仍需写标签 / 入 track_data（C-2 clone 合法）。
+                music_info.download_url.clone(),
                 &file_path,
                 music_info.file_size,
                 Some(progress_cb),

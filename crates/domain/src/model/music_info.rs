@@ -24,6 +24,37 @@ impl DownloadUrl {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// PR-T1 — 线性消耗：把 URL 句柄交给**一次**下载尝试，`self` by-value
+    /// 移走所有权，返回内部 URL 字符串供 attempt 使用。
+    ///
+    /// 编译期不变量（typestate，CLAUDE.md 铁律 1b / plan §1.4 第 4 条）：一个
+    /// `DownloadUrl` 句柄物理上只能 `consume` 一次——move 之后原句柄不可再用，
+    /// 杜绝 AP-005（并行消耗同 url）/ C-4（失败后复用旧 url）。失败需续传必经
+    /// `UrlRefresher` 取**新** `DownloadUrl`，旧句柄已 move 走不可复活。
+    ///
+    /// **边界澄清（C-3 / ADR-001 约束 1）**：consume 边界 = 「把 url 交给一次
+    /// attempt」。attempt 内部 `with_retry` 对取出的 `&str` 同 url 网络层重试是
+    /// 契约允许的（瞬态网络重试 ≠ 用失效 url 外层重试，AP-003 合规）。
+    ///
+    /// 取出内部 URL 供唯一消耗点使用：
+    /// ```
+    /// use netease_domain::model::music_info::DownloadUrl;
+    /// let url = DownloadUrl::new("https://m10.music.126.net/x.flac".into());
+    /// assert_eq!(url.consume(), "https://m10.music.126.net/x.flac");
+    /// ```
+    ///
+    /// 编译期不变量见证（move 后再用 = 编译错，防 C-4/AP-005 复用）：
+    /// ```compile_fail
+    /// use netease_domain::model::music_info::DownloadUrl;
+    /// let url = DownloadUrl::new("https://cdn.example.com/x.mp3".into());
+    /// let _first = url.consume();   // 句柄 move 走
+    /// let _second = url.consume();  // ← 编译错：use of moved value
+    /// ```
+    #[must_use]
+    pub fn consume(self) -> String {
+        self.0
+    }
 }
 
 impl Clone for DownloadUrl {

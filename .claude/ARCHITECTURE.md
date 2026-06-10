@@ -115,8 +115,8 @@ adapter/web  →  domain/service  →  domain/port (trait)
 | `extract_music_id` | `crates/infra/src/extract_id.rs` | URL/ID 统一提取 |
 | `build_file_path` | `crates/domain/src/model/music_info.rs` | 构建下载文件路径 |
 | `get_music_info` | `crates/domain/src/service/download_service.rs` | 获取完整歌曲信息 (detail + url + lyric) |
-| `download_file_ranged` | `crates/infra/src/download/engine/wrapper.rs` | 内嵌续传 FSM driver + atomic rename (5 次重试 + 链接过期有界 refresh) |
-| `run_download_job` | `crates/infra/src/download/engine/job.rs` | 续传 Job FSM driver (Downloading⇄Refreshing 环, R4) |
+| `download_file_ranged` | `crates/infra/src/download/engine/wrapper.rs` | 内嵌续传 FSM driver + atomic rename (5 次重试 + 链接过期有界 refresh); url 入参 DownloadUrl by-value (PR-T1 不变量 #24) |
+| `run_download_job` | `crates/infra/src/download/engine/job.rs` | 续传 Job FSM driver (Downloading⇄Refreshing 环, R4); 持 next_url 句柄, 每 attempt consume 线性消耗 (PR-T1) |
 | `download_client` | `crates/infra/src/download/engine/mod.rs` | 下载专用 HTTP 客户端 (connect 10s / read 60s) |
 | `write_music_tags` | `crates/infra/src/download/tags.rs` | 写入音频标签 (ID3v2/Vorbis/Mp4) |
 | `build_zip_buffer` | `crates/infra/src/download/zip.rs` | 打包 ZIP (音频+封面+歌词) |

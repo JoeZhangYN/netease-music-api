@@ -71,6 +71,10 @@ download_file_ranged(client, &music_info.download_url, &file_path, callback).awa
 
 如果 `download_file_ranged()` 最终失败（5 次重试全部失败），必须丢弃当前 URL 并重新调用 `get_song_url()` 获取全新链接。**禁止用旧的失败 URL 在外层再次尝试下载。**
 
+> **编译期强制（PR-T1，不变量 #24）**：`download_file_ranged` 入参为 `DownloadUrl` by-value，
+> `DownloadUrl::consume(self)` 移走句柄——旧 URL 句柄消耗后物理上不可再用（move 语义），
+> 「用旧失败 URL 外层重试」是编译错而非纪律约束。失败续传由 FSM driver 经 `UrlRefresher` 取新句柄。
+
 ### INV-5: 不可并行消耗
 
 同一个 URL 不可被多个 `download_file_ranged()` 调用并行使用。去重机制（`state.dedup`）确保相同 `music_id + quality` 的下载任务不会并行发起。

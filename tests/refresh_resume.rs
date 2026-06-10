@@ -118,7 +118,7 @@ async fn url_expired_triggers_single_refresh() {
 
     download_file_ranged(
         &client,
-        &format!("{}/expired.flac", server.uri()),
+        DownloadUrl::new(format!("{}/expired.flac", server.uri())),
         &final_path,
         total,
         None,
@@ -146,19 +146,32 @@ async fn url_expired_triggers_single_refresh() {
 
 /// plan §8.2 #4：refresh 返回的 size ≠ expected → `.part` 丢弃 + 全量重来（#14）。
 /// 预置一个非空 `.part`，旧 url 403 触发 refresh；refresh 返错 size → driver discard
-/// `.part`（SizeMismatch → Ready{0}）。验证 `.part` 被删（全量重来痕迹）。
+/// `.part`（SizeMismatch → Ready{0}）。
+///
+/// **PR-T1 行为收紧**：SizeMismatch 后全量重来用**这次 refresh 取到的新句柄**
+/// （旧 expired url 已被 `consume()` 线性移走，编译期不可复用，C-4/AP-003）。故只需
+/// **一次** refresh：refresh 取到新 url（即便它报错 size）→ 丢 `.part` → 用该新 url
+/// 从 0 重下。验证：refresher 恰调 1 次、旧 expired url refresh 后不再被请求、最终文件正确。
 #[tokio::test]
 async fn refresh_size_mismatch_discards_part() {
     let server = MockServer::start().await;
     let body: Vec<u8> = (0..2000).map(|i| (i % 251) as u8).collect();
     let total = body.len() as u64;
 
-    Mock::given(method("GET"))
-        .and(path("/expired.flac"))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-    // refresh 后的 url（size 对得上）→ 成功，让全量重来收尾。
+    // 旧 url /expired.flac → 403（链接级失效）。计数被请求次数（验证不复用）。
+    let expired_hits = Arc::new(AtomicU64::new(0));
+    {
+        let hits = Arc::clone(&expired_hits);
+        Mock::given(method("GET"))
+            .and(path("/expired.flac"))
+            .respond_with(move |_req: &wiremock::Request| {
+                hits.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(403)
+            })
+            .mount(&server)
+            .await;
+    }
+    // refresh 后的 url（CDN 实际全量 body）→ 全量重来收尾。
     Mock::given(method("GET"))
         .and(path("/fresh.flac"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
@@ -166,21 +179,14 @@ async fn refresh_size_mismatch_discards_part() {
         .await;
 
     let calls = Arc::new(AtomicUsize::new(0));
-    // 第 1 次 refresh 返**错** size（total-1）→ SizeMismatch 丢 .part；第 2 次返对的
-    // size + 旧仍 /expired（403）... 为让测试终止，第 2 次直接给 /fresh（对的 size）。
+    // refresh 返**错** size（total-1）→ SizeMismatch 丢 `.part`；但 driver 仍采用此
+    // 新 url（/fresh.flac）从 0 重下，CDN 实际发全量正确 body → 一次 refresh 即收尾。
     let refresher = Arc::new(SequenceRefresher::new(
-        vec![
-            (
-                format!("{}/fresh.flac", server.uri()),
-                total - 1,
-                Quality::Lossless,
-            ),
-            (
-                format!("{}/fresh.flac", server.uri()),
-                total,
-                Quality::Lossless,
-            ),
-        ],
+        vec![(
+            format!("{}/fresh.flac", server.uri()),
+            total - 1,
+            Quality::Lossless,
+        )],
         Arc::clone(&calls),
     ));
     let config = single_stream_config(3, refresher);
@@ -193,7 +199,7 @@ async fn refresh_size_mismatch_discards_part() {
 
     download_file_ranged(
         &make_client(ClientProfile::Download),
-        &format!("{}/expired.flac", server.uri()),
+        DownloadUrl::new(format!("{}/expired.flac", server.uri())),
         &final_path,
         total,
         None,
@@ -202,16 +208,23 @@ async fn refresh_size_mismatch_discards_part() {
     .await
     .expect("after size-mismatch discard + restart must succeed");
 
-    // size mismatch 后 `.part` 被丢弃、全量重来——最终文件正确。
+    // size mismatch 后 `.part` 被丢弃、用新 url 全量重来——最终文件正确。
     let got = std::fs::read(&final_path).expect("final file");
     assert_eq!(
         got, body,
         "full restart after discard must produce correct file"
     );
-    // refresher 至少调 2 次（第 1 次 mismatch 丢弃，第 2 次成功）。
-    assert!(
-        calls.load(Ordering::SeqCst) >= 2,
-        "size mismatch must trigger discard then a further refresh"
+    // PR-T1：refresher 恰调 1 次（旧句柄 consume 走后只能用新句柄全量重来，不再二次 refresh）。
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "size-mismatch full restart must reuse the freshly-refreshed url (one refresh only)"
+    );
+    // 旧 expired url 只在首次 attempt 被请求 1 次，refresh 后绝不复用（AP-003）。
+    assert_eq!(
+        expired_hits.load(Ordering::SeqCst),
+        1,
+        "expired url must not be reused after refresh"
     );
 }
 
@@ -262,7 +275,7 @@ async fn refresh_budget_bounds_total_requests() {
 
     let result = download_file_ranged(
         &client,
-        &format!("{}/bad.flac", server.uri()),
+        DownloadUrl::new(format!("{}/bad.flac", server.uri())),
         &final_path,
         total,
         None,

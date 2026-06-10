@@ -303,3 +303,31 @@ fn download_url_empty_check() {
     let non_empty = DownloadUrl::new("https://example.com".into());
     assert!(!non_empty.is_empty());
 }
+
+// --- Contract C-4 (compile-time): DownloadUrl::consume linear one-time consume ---
+//
+// PR-T1：`consume(self)` by-value 移走 URL 句柄所有权，编译期保证一个句柄物理上
+// 只能消耗一次（杜绝 AP-005 并行消耗 / C-4 失败后复用旧 url）。consume 边界 =
+// 「把 url 交给一次 attempt」，attempt 内部对取出的 `&str` 同 url 网络层重试合法。
+
+/// consume 取出内部 URL 字符串供唯一消耗点（attempt）使用。
+#[test]
+fn c4_consume_yields_inner_url() {
+    let url = DownloadUrl::new("https://m10.music.126.net/once.flac".into());
+    let raw = url.consume();
+    assert_eq!(raw, "https://m10.music.126.net/once.flac");
+}
+
+/// consume 拿走所有权后原句柄已 move——任何对原句柄的再次使用都是「use of moved
+/// value」编译错。**「move 后不可再用」的编译期见证**是 `DownloadUrl::consume` 文档上
+/// 的 `compile_fail` doc-test（`crates/domain/src/model/music_info.rs`，由 `cargo test
+/// --doc` 执行；集成测试文件里的 doc 注释不会被收集，故见证锚在 lib 侧）。本运行时测试
+/// 只断言 consume 取值正确 + 每个 clone 句柄各自独立消耗一次（C-2 clone 合法、无副作用）。
+#[test]
+fn c4_consume_is_linear_move() {
+    let a = DownloadUrl::new("https://cdn.example.com/a.mp3".into());
+    let b = a.clone(); // clone 产新独立句柄（C-2：持有期 clone 合法、无副作用）
+    assert_eq!(a.consume(), "https://cdn.example.com/a.mp3");
+    // `a` 已 move；`b` 是独立句柄，仍可各自消耗一次。
+    assert_eq!(b.consume(), "https://cdn.example.com/a.mp3");
+}

@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `crates/infra/tests/no_truncate_in_resume_primitives.rs`（grep gate + marker 豁免）；SOT 文档同步
     （CLAUDE.md 不变量表 / 本 CHANGELOG / download-link-state-machine.md / download-link.contract.md C-7 /
     references / ARCHITECTURE.md）。
+  - **T1 URL 线性一次性消耗 typestate（不变量 #24）**：`DownloadUrl::consume(self) -> String`
+    by-value 移走句柄；job 边界 `download_file_ranged` / `run_download_job` 入参从裸 `&str` 拆桥为
+    `DownloadUrl` by-value（无兼容 shim）；driver 持 `next_url: Option<DownloadUrl>`，每 attempt
+    `take()`+`consume()` 线性消耗，非终态再循环必经 refresher 把新句柄塞回——「失败后复用旧 url」
+    编译期结构性不可达（C-4/AP-005）。**附带修正**：原 SizeMismatch 后误用 stale expired url 再
+    attempt（多一次 refresh 往返）→ 现采用本次 refresh 的新句柄全量重来，省一次 refresh。
+    compile_fail doc-test (`tests/contract_download_link.rs::c4_consume_is_linear_move`) 见证
+    move 后再用编译错。
   - regression：`tests/{ranged_resume,refresh_resume}.rs` + `engine_regression.rs::single_stream_resumes_from_part_len`。
 - **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
   `templates/index.html`（2813 行 jQuery 单页，`include_str!` 整体嵌入）拆为：服务端 Maud

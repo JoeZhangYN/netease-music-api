@@ -4,7 +4,9 @@
 //! →(取到新 url)→ Downloading`。typestate 表达环须 `Box<dyn>` 类型擦除/外层重建，牺牲
 //! 零成本 + 可读性（错工具）。enum + 穷尽 match 给「新增状态 → 编译期强制每个 match
 //! 站点处理」的 A 档反退化保证（铁律 4）。URL **一次性消耗**（线性不可逆）由 typestate
-//! 兜（`DownloadUrl`，后续 PR），与本 FSM 正交、各用其所。
+//! 兜（`DownloadUrl::consume(self)` by-value，PR-T1 落地），与本 FSM 正交、各用其所——
+//! driver 持 `next_url: DownloadUrl`，每 attempt `consume()` 线性移走，失败续传必经
+//! refresher 取新句柄（旧句柄已 move，编译期防 C-4/AP-005）。
 //!
 //! 非法转换如何被拒（plan §1.4）：
 //! - `ResumeState`/`ResumeEvent` 模块私有——模块外不可构造/跳步改写。
@@ -154,20 +156,25 @@ fn discard_part(part_path: &Path) {
 ///
 /// `refresher == None` 或 `resume_enabled == false`：退化为单次 `attempt_once`（现状
 /// R2/R3 行为，链接过期即失败）——这是用户面兜底逃生口。
+///
+/// **PR-T1 拆桥**：`initial_url` 由裸 `&str` 升级为 `DownloadUrl` by-value——job 边界
+/// 拿走 URL 句柄的所有权，driver 持有的 `next_url` 经 `consume()` 线性交给每次 attempt。
+/// move 语义在编译期保证：一个 URL 句柄只 attempt 一次，失败续传必经 refresher 取**新**
+/// 句柄（旧句柄已 move 走不可复用，C-4/AP-005 编译期成立）。
 pub(super) async fn run_download_job(
     client: &Client,
-    initial_url: &str,
+    initial_url: DownloadUrl,
     part_path: &Path,
     content_length: u64,
     on_progress: Option<ProgressCallback>,
     config: &DownloadConfig,
 ) -> Result<(), AppError> {
     // 退化路径：未启用续传 FSM 或无 refresher → 单次尝试（现状）。
-    // `let-else` 绑定 refresher，否则走退化分支返回——避免 `expect` on Option。
+    // `let-else` 绑定 refresher，否则线性消耗 `initial_url` 走退化分支返回。
     let Some(refresher) = config.refresher.as_ref().filter(|_| config.resume_enabled) else {
         return attempt_once(
             client,
-            initial_url,
+            &initial_url.consume(),
             part_path,
             content_length,
             on_progress,
@@ -178,8 +185,11 @@ pub(super) async fn run_download_job(
     };
     let budget = config.url_refresh_budget;
 
-    // 当前生效 URL（refresh 后替换）。初始来自上层 MusicInfo。
-    let mut current_url = DownloadUrl::new(initial_url.to_string());
+    // 当前生效 URL 句柄（refresh 后替换）。初始来自 job 边界入参（拥有所有权）。
+    // 用 `Option` 承载「下一次 attempt 待消耗的句柄」：每轮 `take()` 移走句柄并置空，
+    // 经 `consume()` 线性消耗——循环若要再 attempt 必经下方 refresh 把新句柄塞回
+    // （编译期 take/None 把「失败后复用旧 url」变成结构性不可达，C-4/AP-003）。
+    let mut next_url: Option<DownloadUrl> = Some(initial_url);
     let mut refreshes_used: u32 = 0;
 
     // FSM：Init → Ready{0} → Downloading → (Assembled | Refreshing 环 | Failed)。
@@ -194,9 +204,17 @@ pub(super) async fn run_download_job(
             st = st.advance(ResumeEvent::EnterDownload)?;
         }
 
+        // 线性消耗当前句柄：`take()` 移走 `Some(url)` 留 `None`，`consume()` 拿走所有权。
+        // 非终态再循环必经下方 refresh 把新句柄塞回；slot 为 `None` 表示无可消耗句柄
+        // （结构性不可达——仅 refresh 失败/终态会留空，那些路径已 break）→ typed 错。
+        let Some(current_url) = next_url.take() else {
+            return Err(AppError::InvalidTransition(
+                "download loop reached attempt with no url handle".into(),
+            ));
+        };
         let attempt = attempt_once(
             client,
-            current_url.as_str(),
+            &current_url.consume(),
             part_path,
             content_length,
             on_progress.clone(),
@@ -238,9 +256,13 @@ pub(super) async fn run_download_job(
                                 "refresh size mismatch — discarding .part for full restart"
                             );
                             discard_part(part_path);
+                            // PR-T1：全量重来仍用**这次 refresh 取到的新句柄**（旧句柄已
+                            // consume 走，不可复用——C-4/AP-003）。SizeMismatch → Ready{0}
+                            // 后下一轮从 0 用此新 url 重下，省一次 refresh 往返。
+                            next_url = Some(refreshed.url);
                             st = st.advance(ResumeEvent::SizeMismatch)?;
                         } else {
-                            current_url = refreshed.url;
+                            next_url = Some(refreshed.url);
                             let written = current_part_len(part_path);
                             info!(
                                 event = %LogEvent::UrlRefreshed,

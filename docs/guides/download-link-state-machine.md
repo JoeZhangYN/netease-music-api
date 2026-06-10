@@ -211,6 +211,14 @@ Range GET = 契约定义的「一次消耗」，合法；见 download-link.contr
 
 ## Typestate 参考实现
 
+> **落地状态（PR-T1，不变量 #24）**：URL **线性一次性消耗**轴已用 typestate 落地——
+> `DownloadUrl::consume(self) -> String` by-value 移走句柄（`crates/domain/src/model/music_info.rs`），
+> job 边界 `download_file_ranged` / `run_download_job` 入参为 `DownloadUrl` by-value。续传 Job
+> 的 `Downloading⇄Refreshing` **环**仍用 enum + 穷尽 match（`job.rs::ResumeState`，plan §1.1：环用
+> typestate 须类型擦除/外层重建、错工具）。下方完整 `PhantomData` 状态机是**参考草图**——展示
+> 若要把整条链路（Discovered→Validated→Consuming）都上 typestate 的形态，当前实现只取其
+> 「Validated→Consuming 一次性消耗」一段（即 `consume(self)`）。
+
 如果需要在编译期强制状态转移规则，可用 Typestate 模式：
 
 ```rust

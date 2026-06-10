@@ -13,6 +13,7 @@
 //! 复用 `engine_regression.rs` 的 wiremock 基建（无新依赖）。ranged 路径触发条件：
 //! `content_length > config.ranged_threshold`——测试把 threshold 设极低逼走 ranged 分支。
 
+use netease_domain::model::music_info::DownloadUrl;
 use netease_infra::download::engine::{
     download_file_ranged, part_path_for, sidecar_path_for, DownloadConfig, PartManifest,
 };
@@ -110,7 +111,7 @@ async fn resume_skips_completed_ranges() {
 
     download_file_ranged(
         &client,
-        &format!("{}/song.flac", server.uri()),
+        DownloadUrl::new(format!("{}/song.flac", server.uri())),
         &final_path,
         total as u64,
         None,
@@ -194,7 +195,7 @@ async fn manifest_behind_reality_redownloads_chunk() {
 
     download_file_ranged(
         &client,
-        &format!("{}/song.flac", server.uri()),
+        DownloadUrl::new(format!("{}/song.flac", server.uri())),
         &final_path,
         total as u64,
         None,
@@ -266,7 +267,7 @@ async fn resume_skips_discontiguous_completed_chunks() {
 
     download_file_ranged(
         &client,
-        &format!("{}/song.flac", server.uri()),
+        DownloadUrl::new(format!("{}/song.flac", server.uri())),
         &final_path,
         total as u64,
         None,
@@ -328,7 +329,7 @@ async fn fresh_ranged_download_without_sidecar_succeeds() {
 
     download_file_ranged(
         &client,
-        &format!("{}/song.flac", server.uri()),
+        DownloadUrl::new(format!("{}/song.flac", server.uri())),
         &final_path,
         total as u64,
         None,

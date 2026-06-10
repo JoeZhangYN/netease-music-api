@@ -4,7 +4,9 @@ Rust/Axum 重写的网易云音乐解析/下载服务，DDD + 六边形架构。
 v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + 类型驱动基础设施铺设。
 v4 断点续传（PR-R1~R5 完成）：`DownloadJob FSM with UrlRefresher + Range resume from .part`
 已 landed——`.part`/sidecar manifest 续传字节态 + 链接过期有界 refresh 续传（不变量 #1/#8/#20/#22/#23，
-施工图 `.claude/plans/download-resume-fsm.md`）。剩余 typestate `DownloadUrl::consume` 线性消耗仍 deferred。
+施工图 `.claude/plans/download-resume-fsm.md`）。typestate `DownloadUrl::consume` 线性消耗已 landed
+（PR-T1，不变量 #24）——job 边界 by-value 拿 `DownloadUrl`，每 attempt `consume(self)` 线性移走，
+失败续传必经 refresher 取新句柄，编译期防 C-4/AP-005 复用。
 
 ## v3 关键不变量（PR 1-13 后立的护栏，**本表为 SOT**——CHANGELOG 段反向引用此表行号）
 
@@ -33,6 +35,7 @@ v4 断点续传（PR-R1~R5 完成）：`DownloadJob FSM with UrlRefresher + Rang
 | 21 | `RetryPolicy` SOT 单源 | `policy.rs::for_profile_with_max_retries` 唯一 ctor (PR-K B)；下载侧 ranged/single_stream 真消费 `config.max_retries`，admin UI 实时生效 (PR-K2) | 4 套独立退避数学（policy/ranged/single_stream 不一致）；声称 SOT 但 default_for_profile 忽略 config |
 | 22 | 续传字节态 SOT + 写序不变量（manifest 永远落后真实字节） | single_stream 字节态 = `.part` 文件长度（顺序 append，R2）；ranged 字节态 = `<part>.json` sidecar `PartManifest`（稀疏 pwrite，R3）。**严格写序（崩溃一致性核心）**：① pwrite chunk → ② flush → ③ `record_chunk`+`persist`（原子 temp+rename），绝不反序——崩溃在 ①②③ 间 manifest 缺记已写 chunk → resume 安全重下（幂等）。续写原语禁无条件截断（`truncate(true)`/`File::create`），反退化锁 `crates/infra/tests/no_truncate_in_resume_primitives.rs` | manifest 超前于真实字节（先记后写）→「以为写了其实没写」损坏；失败 `truncate` 抹盘整文件重来 (pre-R2/R3) |
 | 23 | refresh 有界预算 + 总请求上界 | FSM driver `job.rs::run_download_job` 持 `url_refresh_budget`（`RuntimeConfig`，默认 2，validate 0..=10）；per-attempt 网络重试（`with_retry` #17/#21）与 per-job refresh 预算**正交**，总 CDN/refresh 请求 ≤ `(url_refresh_budget+1) × max_attempts`（regression `refresh_budget_bounds_total_requests` 断言） | refresh × retry 相乘放大风控（无界 refresh 击穿 #18 CDN 护栏）|
+| 24 | 下载 URL 线性一次性消耗（typestate by-value） | `DownloadUrl::consume(self) -> String`（`music_info.rs`）by-value 移走句柄；job 边界 `download_file_ranged` / `run_download_job` 入参为 `DownloadUrl` by-value（非裸 `&str`，PR-T1 拆桥）；driver 持 `next_url: Option<DownloadUrl>`，每 attempt `take()`+`consume()` 线性消耗，非终态再循环必经 refresher 把新句柄塞回——「失败后复用旧 url」结构性不可达。`compile_fail` doc-test 锚在 `DownloadUrl::consume` 文档（`music_info.rs`，`cargo test --doc` 执行）见证 move 后再用编译错 | 同一 url 句柄被并行/重复消耗 (AP-005)；失败后复用旧 url 重试 (C-4/AP-003，pre-T1 SizeMismatch 后误用 stale url 的活样本已修) |
 
 ## 快速定位
 

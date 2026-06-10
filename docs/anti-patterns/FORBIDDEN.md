@@ -17,6 +17,10 @@
 - **触发条件**：`download_file_ranged()` 失败后，在外层用同一个 URL 再次调用
 - **为什么危险**：URL 可能已被消耗或过期，用旧 URL 重试永远不会成功，浪费时间和网络资源
 - **正确做法**：外层重试必须重新调用 `get_song_url()` 获取新 URL。`download_file_ranged()` 内部的 5 次重试是网络层重试，不在此列
+- **编译期强制（PR-T1，不变量 #24）**：`download_file_ranged` 入参为 `DownloadUrl` by-value，
+  `DownloadUrl::consume(self)` 移走句柄——下面 FORBIDDEN 的 `for` 循环复用同一 `info.download_url`
+  会触发「use of moved value」编译错。失败续传必经 `UrlRefresher` 取新句柄（FSM driver），旧句柄
+  不可复活。本节 pseudo-code 仅示意意图，真实代码该模式**不可编译**。
 
 ```rust
 // FORBIDDEN
@@ -57,6 +61,9 @@ tracing::info!("准备下载: id={}, quality={}", music_info.id, music_info.qual
 - **触发条件**：将同一个 `download_url` 同时传给多个 `download_file_ranged()` 调用
 - **为什么危险**：一次性链接只能被一个请求成功使用，并行请求中至少一个会失败。即使非一次性链接，也会产生不必要的带宽消耗
 - **正确做法**：通过 `state.dedup` 去重确保同一 `(music_id, quality)` 同时只有一个下载任务
+- **编译期强制（PR-T1，不变量 #24）**：`DownloadUrl::consume(self)` by-value 移走句柄，一个句柄
+  物理上只能消耗一次——把同一 `DownloadUrl` move 给两个调用会触发「use of moved value」编译错。
+  并发下载同一首歌需各自经 refresher 取独立新句柄（叠加 dedup + in-flight registry 双重防线）。
 
 ## AP-006: 预取下载内容以获取元信息
 

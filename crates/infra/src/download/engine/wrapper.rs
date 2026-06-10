@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use crate::cache::cover_cache::CoverCache;
 use netease_domain::model::download::DownloadResult;
-use netease_domain::model::music_info::{build_file_path, MusicInfo};
+use netease_domain::model::music_info::{build_file_path, DownloadUrl, MusicInfo};
 use netease_domain::model::quality::DEFAULT_QUALITY;
 use netease_domain::port::cookie_store::CookieStore;
 use netease_domain::port::music_api::MusicApi;
@@ -33,9 +33,14 @@ use crate::download::tags::write_music_tags_async;
 ///
 /// PR-3 hotfix: writes to `<file>.part` then atomic-renames to final
 /// path on success. On failure, the final-name file is never created.
+///
+/// PR-T1 拆桥：`url` 由裸 `&str` 升级为 `DownloadUrl` by-value——唯一消耗点（C-3）
+/// 拿走 URL 句柄所有权，沿调用链 move 到 FSM driver 的 `consume()` 线性消耗。调用方
+/// 传 `info.download_url.clone()`（`MusicInfo` 整体 Clone 仍合法，C-2 持有期无副作用），
+/// 把这份 clone 的句柄交给唯一消耗点；driver 内一次 attempt 一次 consume。
 pub async fn download_file_ranged(
     _client: &Client,
-    url: &str,
+    url: DownloadUrl,
     file_path: &Path,
     content_length_hint: u64,
     on_progress: Option<ProgressCallback>,
@@ -61,6 +66,7 @@ pub async fn download_file_ranged(
     // 整个 Job（含 refresh 周期），plan §3.2 约束自动满足，无需上移登记点。
     // resume_enabled=false / refresher=None → driver 内部退化为单次尝试（现状）。
     let result = run_download_job(dl, url, &part_path, content_length, on_progress, config).await;
+    // `url`（DownloadUrl）已被 move 进 run_download_job 线性消耗，此后不可再用。
 
     match result {
         Ok(()) => {
@@ -158,7 +164,9 @@ pub async fn download_music_file(
     let (dl_result, cover_data) = tokio::join!(
         download_file_ranged(
             client,
-            music_info.download_url.as_str(),
+            // PR-T1：消耗点拿 DownloadUrl 所有权。clone 句柄交给唯一消耗点——
+            // `music_info` 后续仍需读元信息写标签（C-2 持有期无副作用，clone 合法）。
+            music_info.download_url.clone(),
             &file_path,
             music_info.file_size,
             on_progress,
@@ -246,7 +254,9 @@ pub async fn download_music_with_metadata(
 
     download_file_ranged(
         client,
-        music_info.download_url.as_str(),
+        // PR-T1：消耗点拿 DownloadUrl 所有权（clone 句柄；`music_info` 为借用入参，
+        // 后续仍需读元信息——C-2 clone 合法）。
+        music_info.download_url.clone(),
         &file_path,
         music_info.file_size,
         on_progress,

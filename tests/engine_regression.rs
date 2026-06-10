@@ -14,6 +14,7 @@
 //! Tests use wiremock to simulate CDN behaviors that previously caused the
 //! "stuck at 90%, retry 1-2x to finish" user pain.
 
+use netease_domain::model::music_info::DownloadUrl;
 use netease_infra::download::engine::{download_file_ranged, part_path_for, DownloadConfig};
 use netease_infra::http::{make_client, ClientProfile};
 use std::time::Duration;
@@ -59,9 +60,16 @@ async fn successful_single_stream_renames_part_to_final() {
     let client = make_client(ClientProfile::Download);
     let config = DownloadConfig::default();
 
-    download_file_ranged(&client, &url, &final_path, body.len() as u64, None, &config)
-        .await
-        .expect("download should succeed");
+    download_file_ranged(
+        &client,
+        DownloadUrl::new(url),
+        &final_path,
+        body.len() as u64,
+        None,
+        &config,
+    )
+    .await
+    .expect("download should succeed");
 
     let actual = std::fs::read(&final_path).unwrap();
     assert_eq!(actual.len(), body.len(), "downloaded size matches");
@@ -97,7 +105,15 @@ async fn download_error_leaves_no_final_file() {
     let mut config = DownloadConfig::default();
     config.max_retries = 1;
 
-    let result = download_file_ranged(&client, &url, &final_path, 1024, None, &config).await;
+    let result = download_file_ranged(
+        &client,
+        DownloadUrl::new(url),
+        &final_path,
+        1024,
+        None,
+        &config,
+    )
+    .await;
     assert!(result.is_err(), "500 must error, got: {result:?}");
 
     // PR-3 ①：rename atomic — final-name file never appears on failure.
@@ -152,7 +168,14 @@ async fn outer_timeout_unblocks_when_server_hangs() {
     let start = std::time::Instant::now();
     let outer = tokio::time::timeout(
         Duration::from_secs(2),
-        download_file_ranged(&client, &url, &final_path, 1024, None, &config),
+        download_file_ranged(
+            &client,
+            DownloadUrl::new(url),
+            &final_path,
+            1024,
+            None,
+            &config,
+        ),
     )
     .await;
     let elapsed = start.elapsed();
@@ -217,9 +240,16 @@ async fn single_stream_resumes_from_part_len() {
     let client = make_client(ClientProfile::Download);
     let config = DownloadConfig::default();
 
-    download_file_ranged(&client, &url, &final_path, full.len() as u64, None, &config)
-        .await
-        .expect("resume download should succeed");
+    download_file_ranged(
+        &client,
+        DownloadUrl::new(url),
+        &final_path,
+        full.len() as u64,
+        None,
+        &config,
+    )
+    .await
+    .expect("resume download should succeed");
 
     // 服务器实际收到的是 `Range: bytes=400-`（续传起点 = .part 长度）。
     let reqs = server.received_requests().await.unwrap();
@@ -271,9 +301,16 @@ async fn single_stream_200_fallback_redownloads_full() {
     let client = make_client(ClientProfile::Download);
     let config = DownloadConfig::default();
 
-    download_file_ranged(&client, &url, &final_path, full.len() as u64, None, &config)
-        .await
-        .expect("200-fallback full re-download should succeed");
+    download_file_ranged(
+        &client,
+        DownloadUrl::new(url),
+        &final_path,
+        full.len() as u64,
+        None,
+        &config,
+    )
+    .await
+    .expect("200-fallback full re-download should succeed");
 
     let actual = std::fs::read(&final_path).unwrap();
     assert_eq!(actual.len(), full.len(), "full re-download size matches");

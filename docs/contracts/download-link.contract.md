@@ -75,7 +75,9 @@ POST: url 已消耗（不可再用）
 
 ### 代码定位
 
-唯一消耗点：`crates/infra/src/download/engine.rs` → `download_file_ranged()`
+唯一消耗点：`crates/infra/src/download/engine/wrapper.rs` → `download_file_ranged()`
+（PR-T1 起入参为 `DownloadUrl` by-value，沿调用链 move 到 FSM driver `job.rs::run_download_job`
+的 `consume(self)` 唯一 CDN GET 处）。
 
 ---
 
@@ -109,6 +111,16 @@ for _ in 0..3 {
     if download(url).await.is_ok() { break; }
 }
 ```
+
+### 编译期强制（PR-T1 typestate）
+
+`DownloadUrl::consume(self) -> String` by-value 移走句柄——一个 URL 句柄物理上只能消耗
+一次。job 边界（`download_file_ranged` / `run_download_job`）入参为 `DownloadUrl` by-value，
+FSM driver 持 `next_url: Option<DownloadUrl>`，每次 attempt `take()`+`consume()` 线性移走；
+失败续传必经 `UrlRefresher::refresh()` 把**新**句柄塞回 slot，旧句柄已 move 走不可复用。
+故「失败后用旧 url 外层重试」（C-4 / AP-003 禁止项）是**编译期结构性不可达**，非运行时检查。
+见证：`DownloadUrl::consume` 文档上的 `compile_fail` doc-test
+（`crates/domain/src/model/music_info.rs`，`cargo test --doc` 执行）。
 
 ---
 
