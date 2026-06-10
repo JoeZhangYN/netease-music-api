@@ -23,3 +23,7 @@ pub mod temp_zip;
 pub use error_response::AppErrorResponse;
 pub use permit::PermitGuard;
 pub use temp_zip::TempZipHandle;
+
+/// Re-export so handlers import the `kind` arg type from the same path as
+/// `PermitGuard` (the only public consumer of `StatsKind`).
+pub use netease_domain::port::stats_store::StatsKind;

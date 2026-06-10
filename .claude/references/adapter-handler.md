@@ -20,7 +20,7 @@
 | health.rs | 40 | 健康检查 |
 | info.rs | 48 | API 信息 |
 | index.rs | 9 | 首页 (Maud SSR：渲染 `view::page::page_shell()`) |
-| ui/ | — | htmx 片段 handler 子模块 (search/song/playlist/album/stats/admin) —— 复用 `*_service` 编排 + `parse_body`/`parse_semaphore`/`stats`，返回 Maud `Markup` 而非 JSON。路由见 adapter-web.md `/ui/*` |
+| ui/ | — | htmx 片段 handler 子模块 (search/song/playlist/album/stats/admin) —— 复用 `*_service` 编排 + `parse_body`/`parse_semaphore`/`stats`，返回 Maud `Markup` 而非 JSON。search/playlist/album 入参 struct 直接 import JSON handler 侧定义（`SearchParams`/`PlaylistParams`/`AlbumParams` 单源，无本地副本）。路由见 adapter-web.md `/ui/*` |
 
 > **htmx/Maud 迁移**：原 jQuery 单页 (`templates/index.html`) 已迁为「Maud 服务端渲染 (`web/view/`)
 > + htmx 区域局部 swap」。公共 JSON API handler（本表上方各 `*.rs`）**一字未改**（不变量 A：外部契约保留）；

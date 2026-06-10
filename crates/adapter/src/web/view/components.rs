@@ -3,7 +3,9 @@
 //! - `song_item`：歌曲列表项**单一来源**（不变量 C）——替代原 jQuery `songItemHTML`，
 //!   search / playlist / album 三处共用。按钮行为仍归 JS 岛（select-song 填 ID 切 tab、
 //!   download-song / add-to-batch），故只渲染 `data-id` + class，不挂 hx-*。
-//! - `error_fragment`：区域内联错误片段（htmx 以 200 返回方能 swap，故 handler 用 200 包裹）。
+//! - `empty_or_error_li`：区域内联错误片段（htmx 以 200 返回方能 swap，故 handler 用 200 包裹）。
+//! - `result_section`：结果区外壳**单一来源**——search / playlist / album 三个 htmx
+//!   `outerHTML` swap 目标共用同一容器骨架（`div.result-section.fade-in > h3 + 内容`）。
 
 use maud::{html, Markup};
 
@@ -34,6 +36,17 @@ pub fn song_item(song: &SongItemVM, idx: Option<usize>) -> Markup {
 pub fn empty_or_error_li(msg: &str) -> Markup {
     html! {
         li class="song-item" style="justify-content:center;color:rgba(255,255,255,.4);" { (msg) }
+    }
+}
+
+/// 结果区外壳 `div#{id}.result-section.fade-in > h3 + 内容`。
+/// id 必须与各区域 htmx `hx-target` 一致（outerHTML 自替换语义）。
+pub fn result_section(id: &str, heading: &str, inner: &Markup) -> Markup {
+    html! {
+        div id=(id) class="result-section fade-in" {
+            h3 { (heading) }
+            (inner)
+        }
     }
 }
 

@@ -15,7 +15,7 @@ v3 critical-bug release（PR-1~13 完成）：用户面 critical bug 全修 + �
 | 5 | 信号量 / stats 配对 | `helpers::PermitGuard` RAII Drop (PR-9) | panic 漏 decrement |
 | 6 | 临时 ZIP 60s 自清 | `helpers::TempZipHandle` Drop (PR-9) | 4 处散布 spawn-sleep |
 | 7 | 错误 → HTTP 状态 | `helpers::AppErrorResponse` `IntoResponse` (PR-9) | 17 处 `format!("xxx 失败")` |
-| 8 | 近期修改文件 5 分钟宽限 (启发式) | `disk_guard::select_evictions` (PR-11/13) — 注：mtime 启发式，非真"in-flight set" | mid-download eviction (削弱不消除) |
+| 8 | 下载中 `.part` 不被驱逐（真 in-flight registry 主防线 + mtime 宽限兜底） | `in_flight::InFlightRegistry` 引用计数 RAII guard（`engine/wrapper.rs` **Job 入口**登记 `download_music_file`/`download_music_with_metadata`，guard 跨重试/刷新计数恒 ≥1 不断开）→ `disk_guard::select_evictions` 跳过 `snapshot()` 路径 (v4)；mtime 5min 宽限 (PR-11/13) 降为第二道防线 | long stall > grace 仍误删活跃 `.part`（pre-registry mtime-only）；**attempt 粒度登记** refresh 间隙漏注册被误删（Task #5 FSM 硬约束规避）|
 | 9 | Slider 边界单源 | `GET /admin/config/schema` (PR-10) | HTML/JS/Rust 三处漂移 |
 | 10 | Quality 列表单源 | `GET /admin/qualities` (PR-10) | HTML 4 select 硬编码 |
 | 11 | DownloadConfig 字段映射单源 | `DownloadConfig::from_runtime_config` (PR-13) | handler 5 处字段-by-字段构造 |

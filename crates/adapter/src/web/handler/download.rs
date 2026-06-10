@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::web::extract::parse_body;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::quality::{quality_display_name, DEFAULT_QUALITY, VALID_QUALITIES};
@@ -57,30 +58,30 @@ pub async fn download_music(
 
     let music_id = extract_music_id(&music_id, &state.http_client).await;
 
-    let Ok(Ok(parse_permit)) = tokio::time::timeout(
+    let Ok(parse_guard) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return APIResponse::error("服务繁忙，请稍后重试", 503).into_response();
     };
-    state.stats.increment("parse");
 
-    let Ok(Ok(download_permit)) = tokio::time::timeout(
+    let Ok(download_guard) = PermitGuard::acquire(
+        Arc::clone(&state.download_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Download,
         std::time::Duration::from_secs(60),
-        state.download_semaphore.acquire(),
     )
     .await
     else {
-        state.stats.decrement("parse");
-        drop(parse_permit);
         return APIResponse::error("下载队列繁忙，请稍后重试", 503).into_response();
     };
-    state.stats.increment("download");
 
     let rc = state.runtime_config.load();
-    let dl_config = DownloadConfig::from_runtime_config(&rc);
+    let dl_config = DownloadConfig::from_runtime_config(&rc, Arc::clone(&state.in_flight));
     let fallback_cfg =
         netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(&rc);
     drop(rc);
@@ -108,21 +109,13 @@ pub async fn download_music(
     )
     .await
     {
-        Ok(r) => {
-            state.stats.decrement("parse");
-            state.stats.decrement("download");
-            drop(parse_permit);
-            drop(download_permit);
-            r
-        }
+        Ok(r) => r,
         Err(e) => {
-            state.stats.decrement("parse");
-            state.stats.decrement("download");
-            drop(parse_permit);
-            drop(download_permit);
             return APIResponse::error(&format!("下载失败: {e}"), 500).into_response();
         }
     };
+    drop(parse_guard);
+    drop(download_guard);
 
     if !result.success {
         return APIResponse::error(&format!("下载失败: {}", result.error_message), 500)

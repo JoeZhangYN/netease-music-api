@@ -7,18 +7,14 @@ use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use serde::Deserialize;
 
 use crate::web::extract::parse_body;
+use crate::web::handler::album::AlbumParams;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::state::AppState;
 use crate::web::view;
 use crate::web::view::model::AlbumVM;
 use netease_domain::service::album_service;
-
-#[derive(Debug, Deserialize, Default)]
-pub struct AlbumParams {
-    pub id: Option<String>,
-}
 
 pub async fn ui_album(
     State(state): State<Arc<AppState>>,
@@ -45,15 +41,16 @@ pub async fn ui_album(
 
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(_permit) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return view::album::error("服务繁忙，请稍后重试");
     };
-    state.stats.increment("parse");
 
     let markup = match album_service::get_album(state.music_api.as_ref(), &album_id, &cookies).await
     {
@@ -64,7 +61,5 @@ pub async fn ui_album(
         Err(e) => view::album::error(&format!("获取专辑失败: {e}")),
     };
 
-    state.stats.decrement("parse");
-    drop(permit);
     markup
 }

@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::web::extract::parse_body;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::service::album_service;
@@ -41,18 +42,18 @@ pub async fn get_album(
 
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let Ok(Ok(parse_permit)) = tokio::time::timeout(
+    let Ok(_permit) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return APIResponse::error("服务繁忙，请稍后重试", 503);
     };
-    state.stats.increment("parse");
 
-    let result = match album_service::get_album(state.music_api.as_ref(), &album_id, &cookies).await
-    {
+    match album_service::get_album(state.music_api.as_ref(), &album_id, &cookies).await {
         Ok(result) => APIResponse::success(
             json!({
                 "status": 200,
@@ -61,9 +62,5 @@ pub async fn get_album(
             "获取专辑详情成功",
         ),
         Err(e) => APIResponse::error(&format!("获取专辑失败: {e}"), 500),
-    };
-
-    state.stats.decrement("parse");
-    drop(parse_permit);
-    result
+    }
 }

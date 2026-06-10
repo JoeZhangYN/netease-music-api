@@ -21,17 +21,31 @@ pub fn quality_display_name(quality: &str) -> &'static str;
 
 ## song.rs
 
-依赖: `serde_json::Value`
+依赖: `serde_json::Value`, `NonZeroI64`, `AppError`
 
 ```rust
 pub struct SongUrlData {
-    pub url: String, pub level: String, pub size: u64,
+    pub id: i64, pub url: String, pub level: String, pub size: u64,
     pub file_type: String, pub bitrate: Option<i64>,
 }
 impl SongUrlData {
     pub fn from_api_response(data: &Value) -> Option<Self>;
 }
 pub fn extract_artists(song_data: &Value) -> String;
+
+// v4 — get_song_detail 的 typed 返回。/songs/0 指针解析单源在此 (from_api_response)，
+// 消费方读 song() 字段；type=name 透传读 into_raw()（保留完整 envelope，外部契约不变）。
+pub struct SongDetail { /* raw: Value (私有), song: Option<SongMeta> */ }
+impl SongDetail {
+    pub fn from_api_response(raw: Value) -> Self;   // 总成功；无 /songs/0 → song = None
+    pub const fn song(&self) -> Option<&SongMeta>;
+    pub fn into_raw(self) -> Value;                 // type=name 透传
+}
+pub struct SongMeta {                               // 字段 = get_music_info + handle_json 消费集
+    pub name: String, pub artists: String, pub album: String,
+    pub pic_url: String, pub duration_ms: i64, pub track_number: i32,
+}
+// SongId — PR-7 NonZeroI64 newtype（拒 0/负，try_new/get/FromStr）
 ```
 
 ## music_info.rs
@@ -48,6 +62,9 @@ pub struct MusicInfo {
 }
 pub fn determine_file_extension(url: &str, file_type: &str) -> &'static str;
 pub fn build_file_path(downloads_dir: &Path, music_info: &MusicInfo, quality: &str) -> PathBuf;
+// v4: 内部 `enum FileType {Mp3,Flac,M4a,Av3a}` + `from_type_str` 单源解析 file_type,
+//     穷尽 match 替原 `== "flac"` 字符串比较。MusicInfo.file_type 仍 String
+//     (type 外部响应需原样透传非枚举值, 整体升级会丢精度)。
 ```
 
 ## download.rs

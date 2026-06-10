@@ -5,7 +5,7 @@
 
 use maud::{html, Markup};
 
-use super::components::{empty_or_error_li, song_item};
+use super::components::{empty_or_error_li, result_section, song_item};
 use super::model::SongItemVM;
 
 /// 搜索结果区（命中 / 空 / 错误统一走此容器，保持 outerHTML 自替换语义）。
@@ -27,10 +27,9 @@ pub fn error(msg: &str) -> Markup {
 }
 
 fn wrap(list_inner: &Markup) -> Markup {
-    html! {
-        div id="search-result" class="result-section fade-in" {
-            h3 { "检索结果 · Search" }
-            ul class="song-list" id="search-list" { (list_inner) }
-        }
-    }
+    result_section(
+        "search-result",
+        "检索结果 · Search",
+        &html! { ul class="song-list" id="search-list" { (list_inner) } },
+    )
 }

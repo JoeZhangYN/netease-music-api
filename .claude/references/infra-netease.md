@@ -22,8 +22,8 @@ impl NeteaseApi { pub fn new(client: Client) -> Self; }
 
 #[async_trait]
 impl MusicApi for NeteaseApi {
-    async fn get_song_url(&self, song_id, quality, cookies) -> Result<Value, AppError>;
-    async fn get_song_detail(&self, song_id) -> Result<Value, AppError>;
+    async fn get_song_url(&self, song_id, quality, cookies) -> Result<SongUrlData, AppError>; // PR-6 typed
+    async fn get_song_detail(&self, song_id) -> Result<SongDetail, AppError>; // v4: SongDetail::from_api_response(result)
     async fn get_lyric(&self, song_id, cookies) -> Result<Value, AppError>;
     async fn search(&self, keywords, cookies, limit) -> Result<Vec<Value>, AppError>;
     async fn get_playlist(&self, playlist_id, cookies) -> Result<Value, AppError>;

@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **不变量 #5 真正落地：PermitGuard 全量迁移 + 机械拆桥** —— PR-9 造了 RAII helper 但 13 个
+  handler 全部仍手动 `stats.increment/decrement + drop(permit)` 配对（panic 路径漏 decrement）。
+  本轮 13 个 handler（JSON + ui/）全迁 `PermitGuard::acquire`；`AppState` 三信号量字段
+  `Semaphore` → `Arc<Semaphore>`（owned 设计原始意图归位）；新增 `acquire_unbounded` 变体保留
+  download_async 背景 worker「永久等不超时」原语义；拆桥锁 `tests/no_manual_stats_in_handlers.rs`
+  grep 断言 handler/ 下零手动调用（helpers 单源豁免）。
+- **不变量 #8 升级：真 in-flight registry 主防线（mtime 宽限降为兜底）** —— 新增
+  `infra::download::in_flight::InFlightRegistry`（引用计数 `DashMap<PathBuf,usize>` + RAII guard），
+  **Job 粒度**登记（`download_music_file`/`download_music_with_metadata` 入口，嵌套 attempt guard
+  计数叠加、跨重试/刷新间隙恒 ≥1 不断开——FSM 设计硬约束）；`disk_guard::select_evictions` 跳过
+  登记中路径，杜绝「下载 stall > 5min 宽限被误删 .part」race；反退化测试 4 个（含嵌套 refcount）。
+- **`MusicApi::get_song_detail` 端口类型化** —— 裸 `Value` → `SongDetail`（解析单源
+  `from_api_response`，沿用 PR-6 precedent）；domain 服务删除 `/al/name` `/al/picUrl` 等 JSON
+  pointer 手解；`/song?type=name` 外部 envelope 经 `into_raw()` 逐字节透传（外部契约零破坏）。
+  `determine_file_extension` 内部化 `FileType` enum 替字符串比较（`field_compare:flac` 豁免删除）。
+- **`StatsStore` 入参类型化 `StatsKind { Parse, Download }`** —— 替换 ~21 处裸 `&str` key
+  （含 `PermitGuard` kind 参数），`as_str()` 单源映射；/stats 端点 + SSE JSON 字段名逐字节不变，
+  on-disk `parse_stats.json` 兼容。
+- **adapter 入参/视图去重（abstraction-gate 25 候选 × 3 refuter 审查产出）** ——
+  `SearchParams`/`PlaylistParams`/`AlbumParams` UI 侧字节级副本删除、import JSON handler 单源；
+  view 三模块 `wrap` 外壳收敛 `components::result_section(id, heading, inner)`。其余 21 候选
+  判定为巧合锚/同名异义，维持分立。
+
+### Added
+- **断点续传 DownloadJob FSM 设计文档（未实现）** `.claude/plans/download-resume-fsm.md` ——
+  enum FSM（Downloading⇄Refreshing 环）+ UrlRefresher port + sidecar manifest + PR R1~R5 切分；
+  关键发现：现有 `.part` 每次 `truncate(true)`/`File::create` 抹盘、**实际不可续传**。
 - **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
   `templates/index.html`（2813 行 jQuery 单页，`include_str!` 整体嵌入）拆为：服务端 Maud
   视图层 `crates/adapter/src/web/view/`（`page_shell` 首屏 + 各区域 HTML 片段）+ htmx 片段
@@ -24,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   删除原 JS 的 `collectAdminConfig`/`validateAdminConfig` 重复。
 
 ### Fixed
+- **download_async 超时文案假承诺** —— 「已下载部分保留为 .part，重试将复用」与代码漂移
+  （现实现重试 truncate 重写、不复用），改为如实「请重试（将重新完整下载）」；真复用待 FSM 落地。
 - **「解析跳转后点击查询小卡顿」** —— 根因是 `#search-btn`（检索）点击后**无即时视觉反馈**
   （4 个主动作按钮里唯一漏反馈的），网络往返期间用户以为卡住。htmx `.htmx-request` CSS 在点击
   瞬间给按钮加 spinner（单源即时反馈，替代各按钮手写 `disabled+text`），根治该卡顿观感。

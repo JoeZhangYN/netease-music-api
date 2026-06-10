@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
@@ -229,9 +230,11 @@ async fn single_download_worker(
     metadata: Option<MusicInfo>,
     dedup_key: Option<String>,
 ) {
-    let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(_download_guard) = PermitGuard::acquire(
+        Arc::clone(&state.download_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Download,
         std::time::Duration::from_secs(60),
-        state.download_semaphore.acquire(),
     )
     .await
     else {
@@ -248,8 +251,6 @@ async fn single_download_worker(
         return;
     };
 
-    state.stats.increment("download");
-
     if let Err(e) = do_single_download(&state, &task_id, &music_id, &quality, metadata).await {
         error!("Background download error: {}", e);
         let msg = e;
@@ -262,8 +263,6 @@ async fn single_download_worker(
         );
     }
 
-    state.stats.decrement("download");
-    drop(permit);
     if let Some(ref key) = dedup_key {
         state.dedup.remove(key);
     }
@@ -330,12 +329,15 @@ async fn do_single_download(
             }),
         );
 
-        let parse_permit = state
-            .parse_semaphore
-            .acquire()
-            .await
-            .map_err(|e| format!("parse semaphore closed: {e}"))?;
-        state.stats.increment("parse");
+        // 背景任务原语义：无超时永久等 parse 许可（仅 semaphore closed 才 Err）。
+        // acquire_unbounded 保留该行为 + RAII 兜 panic。
+        let parse_guard = PermitGuard::acquire_unbounded(
+            Arc::clone(&state.parse_semaphore),
+            Arc::clone(&state.stats),
+            StatsKind::Parse,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         let info_result = download_service::get_music_info(
             api,
@@ -347,8 +349,7 @@ async fn do_single_download(
         )
         .await;
 
-        state.stats.decrement("parse");
-        drop(parse_permit);
+        drop(parse_guard);
 
         info_result.map_err(|e| e.to_string())?
     };
@@ -399,7 +400,7 @@ async fn do_single_download(
     let (dl_config, dl_timeout_secs) = {
         let rc = state.runtime_config.load();
         (
-            DownloadConfig::from_runtime_config(&rc),
+            DownloadConfig::from_runtime_config(&rc, Arc::clone(&state.in_flight)),
             rc.download_timeout_per_song_secs,
         )
     };
@@ -425,9 +426,9 @@ async fn do_single_download(
         Ok(Ok(r)) => r,
         Ok(Err(e)) => return Err(e.to_string()),
         Err(_) => {
-            let msg = format!(
-                "下载超时（{dl_timeout_secs}秒）。已下载部分保留为 .part，重试将复用。"
-            );
+            // 注意：现实现重试不复用 .part（ranged 路径 truncate 重写）——
+            // 断点续传复用是 v4 FSM 的事（.claude/plans/download-resume-fsm.md），落地前文案不许诺。
+            let msg = format!("下载超时（{dl_timeout_secs}秒）。请重试（将重新完整下载）。");
             state.task_store.update(
                 task_id,
                 Box::new(move |t| {

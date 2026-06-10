@@ -15,14 +15,17 @@
 
 ## song_service.rs
 
-依赖: `MusicApi`, `SongUrlData`, `extract_artists`, `format_file_size`, `quality_display_name`
+依赖: `MusicApi`, `SongUrlData`, `format_file_size`, `quality_display_name`
 
 ```rust
 pub async fn handle_url(api, music_id, level, cookies) -> Result<Value, AppError>;
-pub async fn handle_name(api, music_id) -> Result<Value, AppError>;
+pub async fn handle_name(api, music_id) -> Result<Value, AppError>;   // v4: SongDetail.into_raw() 透传
 pub async fn handle_lyric(api, music_id, cookies) -> Result<Value, AppError>;
-pub async fn handle_json(api, music_id, level, cookies) -> Result<Value, AppError>;
+pub async fn handle_json(api, music_id, level, cookies) -> Result<Value, AppError>; // v4: 读 SongDetail.song() typed 字段
 ```
+
+> v4：`handle_json` 不再 `extract_artists` + `/songs/0` 指针手解，改读 `detail.song()`
+> 的 `SongMeta` typed 字段；输出 JSON 形状不变（`SongDetailVM` 反序列化无影响）。
 
 ## search_service.rs
 
@@ -53,10 +56,12 @@ pub fn check_status(store) -> bool;
 
 ## download_service.rs
 
-依赖: `MusicApi`, `MusicInfo`, `extract_artists`, `tokio::join!`
+依赖: `MusicApi`, `MusicInfo`, `DownloadUrl`, `Quality`, `resolve_url_with_fallback`, `futures::join!`
 
 ```rust
-pub async fn get_music_info(api, music_id, quality, cookies) -> Result<MusicInfo, AppError>;
+pub async fn get_music_info(api, music_id, requested_quality, cookies, fallback_cfg, trace_id) -> Result<MusicInfo, AppError>;
 ```
 
-并行调用 get_song_url + get_song_detail + get_lyric，组装完整 MusicInfo。
+并行调用 resolve_url_with_fallback(get_song_url) + get_song_detail + get_lyric，组装完整 MusicInfo。
+v4：删 `/songs/0` JSON 指针手解，改读 `detail.song()` 的 `SongMeta` typed 字段；
+`未知歌曲`/`未知专辑` 空值占位符留此处（handle_json 走 SongMeta 原值不加占位）。

@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::music_info::{DownloadUrl, MusicInfo};
@@ -44,32 +45,28 @@ pub async fn download_with_metadata(
     let music_id = extract_music_id(&raw_id, &state.http_client).await;
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let Ok(Ok(parse_permit)) = tokio::time::timeout(
+    let Ok(parse_guard) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return APIResponse::error("服务繁忙，请稍后重试", 503).into_response();
     };
-    state.stats.increment("parse");
 
     let url_result = match state
         .music_api
         .get_song_url(&music_id, &quality, &cookies)
         .await
     {
-        Ok(r) => {
-            state.stats.decrement("parse");
-            drop(parse_permit);
-            r
-        }
+        Ok(r) => r,
         Err(e) => {
-            state.stats.decrement("parse");
-            drop(parse_permit);
             return APIResponse::error(&format!("API调用失败: {e}"), 500).into_response();
         }
     };
+    drop(parse_guard);
 
     // PR-6: get_song_url returns typed SongUrlData; no more .pointer()
     let download_url = url_result.url.clone();
@@ -95,7 +92,10 @@ pub async fn download_with_metadata(
         tlyric: data.tlyric.unwrap_or_default(),
     };
 
-    let dl_config = DownloadConfig::from_runtime_config(&state.runtime_config.load());
+    let dl_config = DownloadConfig::from_runtime_config(
+        &state.runtime_config.load(),
+        Arc::clone(&state.in_flight),
+    );
 
     let (dl_result, cover_data) = tokio::join!(
         download_music_with_metadata(

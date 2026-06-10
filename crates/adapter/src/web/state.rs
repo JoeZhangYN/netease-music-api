@@ -11,6 +11,7 @@ use netease_domain::port::music_api::MusicApi;
 use netease_domain::port::stats_store::StatsStore;
 use netease_domain::port::task_store::TaskStore;
 use netease_infra::cache::cover_cache::CoverCache;
+use netease_infra::download::in_flight::InFlightRegistry;
 use netease_infra::http::RateLimiter;
 use netease_infra::persistence::task_memory::InMemoryTaskStore;
 use netease_kernel::config::AppConfig;
@@ -27,11 +28,15 @@ pub struct AppState {
     pub cookie_store: Arc<dyn CookieStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub stats: Arc<dyn StatsStore>,
-    pub parse_semaphore: Semaphore,
-    pub download_semaphore: Semaphore,
-    pub batch_semaphore: Semaphore,
+    pub parse_semaphore: Arc<Semaphore>,
+    pub download_semaphore: Arc<Semaphore>,
+    pub batch_semaphore: Arc<Semaphore>,
     pub sse_tx: broadcast::Sender<String>,
     pub cover_cache: Arc<CoverCache>,
+    /// 不变量 #8：真 in-flight `.part` registry，单实例共享给所有下载与
+    /// disk_guard。handler 构造 `DownloadConfig` 时 Arc 克隆注入，使引擎登记侧
+    /// 与磁盘驱逐消费侧看到同一份集合。
+    pub in_flight: Arc<InFlightRegistry>,
     pub dedup: DashMap<String, String>,
     pub cancelled: DashMap<String, ()>,
     pub task_store_inner: Arc<InMemoryTaskStore>,

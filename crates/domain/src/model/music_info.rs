@@ -55,13 +55,38 @@ pub struct MusicInfo {
     pub tlyric: String,
 }
 
+/// v4 — 网易云 `type` 字段的封闭域。把散布的 `file_type == "flac"` 字符串比较
+/// 收敛到单一解析点（`from_type_str`）+ 穷尽 match，杜绝拼写漂移。
+/// 仅 `determine_file_extension` 内部消费——`MusicInfo.file_type` 字段保持
+/// `String`（`type` 外部响应需原样透传非枚举值，整体升级会丢失精度）。
+#[derive(Debug, Clone, Copy)]
+enum FileType {
+    Mp3,
+    Flac,
+    M4a,
+    Av3a,
+}
+
+impl FileType {
+    fn from_type_str(s: &str) -> Self {
+        match s {
+            "flac" => Self::Flac,
+            "m4a" => Self::M4a,
+            "av3a" => Self::Av3a,
+            _ => Self::Mp3,
+        }
+    }
+}
+
 pub fn determine_file_extension(url: &str, file_type: &str) -> &'static str {
     let url_lower = url.to_lowercase();
-    if url_lower.contains(".flac") || file_type == "flac" {
+    let ft = FileType::from_type_str(file_type);
+    // URL 后缀提示与 type 字段保持原有「按序 OR」短路语义（顺序敏感，勿重排）。
+    if url_lower.contains(".flac") || matches!(ft, FileType::Flac) {
         ".flac"
-    } else if url_lower.contains(".m4a") || file_type == "m4a" {
+    } else if url_lower.contains(".m4a") || matches!(ft, FileType::M4a) {
         ".m4a"
-    } else if url_lower.contains(".mp4") || file_type == "av3a" {
+    } else if url_lower.contains(".mp4") || matches!(ft, FileType::Av3a) {
         // 杜比全景声 = av3a（Audio Vivid），MP4 容器。命名为 .mp4 而非误判 .mp3。
         // 注：av3a 非标准 MP4 音频，lofty 无法嵌标签（tags.rs 对未知 ext 静默跳过）。
         ".mp4"

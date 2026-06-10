@@ -7,21 +7,14 @@ use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use serde::Deserialize;
 
 use crate::web::extract::parse_body;
+use crate::web::handler::search::SearchParams;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::state::AppState;
 use crate::web::view;
 use crate::web::view::model::SongItemVM;
 use netease_domain::service::search_service;
-
-#[derive(Debug, Deserialize, Default)]
-pub struct SearchParams {
-    pub keyword: Option<String>,
-    pub keywords: Option<String>,
-    pub q: Option<String>,
-    pub limit: Option<String>,
-}
 
 pub async fn ui_search(
     State(state): State<Arc<AppState>>,
@@ -47,15 +40,16 @@ pub async fn ui_search(
 
     let cookies = state.cookie_store.parse().unwrap_or_default();
 
-    let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(_permit) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return view::search::error("服务繁忙，请稍后重试");
     };
-    state.stats.increment("parse");
 
     let markup =
         match search_service::search(state.music_api.as_ref(), &keyword, &cookies, limit).await {
@@ -69,7 +63,5 @@ pub async fn ui_search(
             Err(e) => view::search::error(&format!("搜索失败: {e}")),
         };
 
-    state.stats.decrement("parse");
-    drop(permit);
     markup
 }

@@ -2,12 +2,16 @@
 //! 自由空间，不足时按 mtime 升序驱逐缓存文件。
 //!
 //! 决策与 IO 分离：
-//! - `select.rs` 纯决策（候选 + 时钟 + 宽限期 → 驱逐计划），单测覆盖 6 个边界
-//! - 本文件做 fs 扫描 / fs 删除 / 结构化日志
+//! - `select.rs` 纯决策（候选 + in-flight 集合 + 时钟 + 宽限期 → 驱逐计划），
+//!   单测覆盖 in-flight 跳过 + 6 个 mtime 边界
+//! - 本文件做 fs 扫描 / fs 删除 / 结构化日志，并从 [`InFlightRegistry`] 取快照
 //!
-//! `disk_guard_grace_secs` 由 `RuntimeConfig` 注入（默认 300，最小 60）；
-//! 此值是"近期修改文件 5 分钟宽限"启发式，用于减小并发下载与驱逐竞态——
-//! 不等价于真"in-flight set"（长 stall > 5min 的 .part 仍可能被驱逐）。
+//! 双层防线（不变量 #8）：
+//! 1. **真 in-flight registry**（主）——`in_flight.snapshot()` 内的 `.part` 路径
+//!    无条件跳过，精确覆盖「正被某下载持有写入」的文件，含 stall > grace 的长
+//!    停滞。登记/注销由下载引擎 RAII guard 负责（见 `engine/wrapper.rs`）。
+//! 2. **mtime 宽限**（次）——`disk_guard_grace_secs`（默认 300，最小 60）跳过
+//!    近期修改文件，作为 registry 未覆盖场景（如外部进程写入）的兜底启发式。
 
 mod select;
 
@@ -19,6 +23,7 @@ use tracing::{error, info, warn};
 use netease_kernel::error::AppError;
 use netease_kernel::observability::LogEvent;
 
+use crate::download::in_flight::InFlightRegistry;
 use select::{select_evictions, FileEntry};
 
 fn collect_files_by_age(dir: &Path) -> Vec<FileEntry> {
@@ -67,6 +72,7 @@ pub fn ensure_disk_space(
     needed_bytes: u64,
     min_free_disk: u64,
     grace_secs: u64,
+    in_flight: &InFlightRegistry,
 ) -> Result<(), AppError> {
     let required = min_free_disk.saturating_add(needed_bytes);
 
@@ -89,7 +95,9 @@ pub fn ensure_disk_space(
     let files = collect_files_by_age(downloads_dir);
     let now = SystemTime::now();
     let grace = Duration::from_secs(grace_secs);
-    let plan = select_evictions(&files, now, grace, deficit);
+    // 主防线：取 in-flight .part 快照，select 阶段无条件跳过这些路径。
+    let in_flight_paths = in_flight.snapshot();
+    let plan = select_evictions(&files, now, grace, deficit, &in_flight_paths);
 
     let mut freed: u64 = 0;
     for file in &plan.to_evict {
@@ -114,6 +122,7 @@ pub fn ensure_disk_space(
         event = %LogEvent::DiskEvictionSummary,
         evicted_count = plan.to_evict.len(),
         skipped_recent = plan.skipped_recent,
+        skipped_in_flight = plan.skipped_in_flight,
         grace_secs = grace_secs,
         freed_bytes = freed,
         "磁盘缓存清理完成",
@@ -132,6 +141,7 @@ pub fn ensure_disk_space(
             available_mb = available / 1024 / 1024,
             required_mb = required / 1024 / 1024,
             skipped_recent = plan.skipped_recent,
+            skipped_in_flight = plan.skipped_in_flight,
             grace_secs = grace_secs,
             freed_bytes = freed,
             "磁盘清理后仍不足",

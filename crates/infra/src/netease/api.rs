@@ -17,7 +17,7 @@ use std::str::FromStr;
 
 use netease_domain::model::api_error::ApiError;
 use netease_domain::model::quality::Quality;
-use netease_domain::model::song::SongUrlData;
+use netease_domain::model::song::{SongDetail, SongUrlData};
 use netease_domain::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
 
@@ -114,7 +114,7 @@ impl MusicApi for NeteaseApi {
         )
     }
 
-    async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {
+    async fn get_song_detail(&self, song_id: &str) -> Result<SongDetail, AppError> {
         let song_id_num: i64 = song_id.parse().map_err(|_e: std::num::ParseIntError| {
             AppError::Validation(format!("Invalid song ID: {song_id}"))
         })?;
@@ -142,7 +142,9 @@ impl MusicApi for NeteaseApi {
             return Err(AppError::from(classify_netease_code(code, msg)));
         }
 
-        Ok(result)
+        // v4: typed parse — /songs/0 pointer-walking lives here, consumers read
+        // SongMeta fields; raw envelope preserved for the type=name passthrough.
+        Ok(SongDetail::from_api_response(result))
     }
 
     async fn get_lyric(

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use netease_domain::model::song::SongUrlData;
+use netease_domain::model::song::{SongDetail, SongUrlData};
 use netease_domain::port::music_api::MusicApi;
 use netease_kernel::error::AppError;
 use serde_json::Value;
@@ -66,7 +66,7 @@ impl<A: MusicApi> MusicApi for RateLimitedMusicApi<A> {
         self.inner.get_song_url(song_id, quality, cookies).await
     }
 
-    async fn get_song_detail(&self, song_id: &str) -> Result<Value, AppError> {
+    async fn get_song_detail(&self, song_id: &str) -> Result<SongDetail, AppError> {
         // get_song_detail 无 cookie 参数，用 anon 桶
         let key = RateLimitKey {
             host: HOST_API.into(),

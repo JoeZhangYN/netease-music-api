@@ -109,6 +109,77 @@ pub fn extract_artists(song_data: &Value) -> String {
     )
 }
 
+/// v4 — typed result of `MusicApi::get_song_detail`. Pre-v4 the trait returned
+/// raw `serde_json::Value` and both `download_service::get_music_info` and
+/// `song_service::handle_json` hand-walked `/songs/0/al/name` etc.; JSON pointer
+/// typos only surfaced at runtime. The `song` view parses those fields once
+/// (mirrors the `SongUrlData::from_api_response` pattern), so consumers read by
+/// name.
+///
+/// `raw` preserves the full upstream envelope verbatim for the `type=name`
+/// passthrough (`song_service::handle_name`), whose external JSON contract must
+/// not change. Only that proxy reads `raw`; structured consumers use `song()`.
+#[derive(Debug)]
+pub struct SongDetail {
+    raw: Value,
+    song: Option<SongMeta>,
+}
+
+/// Typed view of a single song's detail (netease `/songs/0`). Field set = what
+/// `get_music_info` + `handle_json` consume. String defaults are `""` (absent),
+/// matching the prior raw extraction; `artists` carries `extract_artists`'
+/// `"未知艺术家"` default. The `未知歌曲`/`未知专辑` filename placeholders stay in
+/// `get_music_info` (handle_json wants `""`), so they are NOT baked here.
+#[derive(Debug, Clone)]
+pub struct SongMeta {
+    pub name: String,
+    pub artists: String,
+    pub album: String,
+    pub pic_url: String,
+    pub duration_ms: i64,
+    pub track_number: i32,
+}
+
+impl SongDetail {
+    /// Parse the full `get_song_detail` envelope. Always succeeds (callers
+    /// already rejected `code != 200`); `song` is `None` when `/songs/0` is
+    /// absent, so the raw passthrough still works while structured consumers
+    /// raise their own "not found" errors.
+    pub fn from_api_response(raw: Value) -> Self {
+        let song = raw.pointer("/songs/0").map(|s| SongMeta {
+            name: s
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            artists: extract_artists(s),
+            album: s
+                .pointer("/al/name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            pic_url: s
+                .pointer("/al/picUrl")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            duration_ms: s.get("dt").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            track_number: s.get("no").and_then(serde_json::Value::as_i64).unwrap_or(0) as i32,
+        });
+        Self { raw, song }
+    }
+
+    /// Typed view of `/songs/0`; `None` when upstream returned no song.
+    pub const fn song(&self) -> Option<&SongMeta> {
+        self.song.as_ref()
+    }
+
+    /// Consume into the raw upstream envelope (for the `type=name` passthrough).
+    pub fn into_raw(self) -> Value {
+        self.raw
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +208,51 @@ mod tests {
     fn empty_url_returns_none() {
         let v = json!({"url": "", "size": 100});
         assert!(SongUrlData::from_api_response(&v).is_none());
+    }
+
+    // ---------- v4 SongDetail tests ----------
+    #[test]
+    fn song_detail_parses_typed_fields() {
+        let v = json!({
+            "code": 200,
+            "songs": [{
+                "name": "歌曲名",
+                "ar": [{"name": "歌手A"}, {"name": "歌手B"}],
+                "al": {"name": "专辑名", "picUrl": "https://p.music.126.net/x.jpg"},
+                "dt": 215_000,
+                "no": 3,
+            }],
+        });
+        let detail = SongDetail::from_api_response(v);
+        let song = detail.song().expect("song present");
+        assert_eq!(song.name, "歌曲名");
+        assert_eq!(song.artists, "歌手A/歌手B");
+        assert_eq!(song.album, "专辑名");
+        assert_eq!(song.pic_url, "https://p.music.126.net/x.jpg");
+        assert_eq!(song.duration_ms, 215_000);
+        assert_eq!(song.track_number, 3);
+    }
+
+    #[test]
+    fn song_detail_missing_song_is_none_but_raw_preserved() {
+        // type=name passthrough must keep the raw envelope even with no /songs/0.
+        let v = json!({"code": 200, "songs": []});
+        let detail = SongDetail::from_api_response(v.clone());
+        assert!(detail.song().is_none());
+        assert_eq!(detail.into_raw(), v);
+    }
+
+    #[test]
+    fn song_detail_absent_fields_default_to_empty() {
+        let v = json!({"code": 200, "songs": [{}]});
+        let detail = SongDetail::from_api_response(v);
+        let song = detail.song().expect("song object present");
+        assert_eq!(song.name, "");
+        assert_eq!(song.artists, "未知艺术家"); // extract_artists default
+        assert_eq!(song.album, "");
+        assert_eq!(song.pic_url, "");
+        assert_eq!(song.duration_ms, 0);
+        assert_eq!(song.track_number, 0);
     }
 
     #[test]

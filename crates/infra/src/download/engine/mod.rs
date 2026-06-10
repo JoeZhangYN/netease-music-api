@@ -18,6 +18,7 @@ use reqwest::Client;
 
 use netease_kernel::runtime_config::RuntimeConfig;
 
+use crate::download::in_flight::InFlightRegistry;
 use crate::http::{make_client, ClientProfile};
 
 mod ranged;
@@ -37,6 +38,11 @@ pub struct DownloadConfig {
     pub max_retries: usize,
     pub min_free_disk: u64,
     pub disk_guard_grace_secs: u64,
+    /// 真 in-flight registry（项目不变量 #8）。下载引擎写 `.part` 时经此登记
+    /// 路径，`disk_guard` 驱逐时跳过，避免长 stall 的活跃下载被误删。单实例
+    /// 存于 `AppState`，按 Arc 克隆注入每个 `DownloadConfig`——所有克隆共享同
+    /// 一份集合。`Default`/测试构造独立空 registry（无 disk_guard 协调）。
+    pub in_flight: Arc<InFlightRegistry>,
 }
 
 impl Default for DownloadConfig {
@@ -47,6 +53,7 @@ impl Default for DownloadConfig {
             max_retries: 5,
             min_free_disk: 500 * 1024 * 1024,
             disk_guard_grace_secs: 300,
+            in_flight: Arc::new(InFlightRegistry::new()),
         }
     }
 }
@@ -56,13 +63,18 @@ impl DownloadConfig {
     ///
     /// SOT 收敛：handler 层 5+ 处的字段-by-字段构造模板（pre-PR-13 反模式）
     /// 全部统一到此函数。加新字段时只改这里 + struct 定义两处，无遗漏。
-    pub const fn from_runtime_config(rc: &RuntimeConfig) -> Self {
+    ///
+    /// `in_flight` 不来自 `RuntimeConfig`——它是跨下载共享的进程级运行时状态，
+    /// 由调用方（handler）从 `AppState` Arc 克隆传入，保证所有下载共享一份。
+    /// 仍为 `const fn`：移动 Arc 入参到 struct 是 const 兼容操作（无堆分配/无 drop）。
+    pub const fn from_runtime_config(rc: &RuntimeConfig, in_flight: Arc<InFlightRegistry>) -> Self {
         Self {
             ranged_threshold: rc.ranged_threshold,
             ranged_threads: rc.ranged_threads,
             max_retries: rc.max_retries,
             min_free_disk: rc.min_free_disk,
             disk_guard_grace_secs: rc.disk_guard_grace_secs,
+            in_flight,
         }
     }
 }

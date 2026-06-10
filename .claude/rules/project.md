@@ -155,11 +155,6 @@ audit-source-of-truth subagent + PreToolUse `domain_sot_gate` + aggregate.rs 三
 - pattern: 'field_compare:parse_concurrency'
   reason: "validate-then-apply 双语义比较，合理保留"
 
-# file_type=flac：music_info.rs determine_file_extension 用字符串是 v3 妥协。
-# v4 plan 已列入 typestate (FileType enum) 重构项。
-- pattern: 'field_compare:flac'
-  reason: "v4 deferred — typestate FileType enum 整体替换"
-
 # created_at：task_memory.rs TTL 检查（now - created_at > ttl）+ 测试断言两处。
 - pattern: 'field_compare:created_at'
   reason: "TTL check vs test assertion, 不同语义"

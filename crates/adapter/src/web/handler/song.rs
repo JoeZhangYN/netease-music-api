@@ -7,6 +7,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::web::extract::parse_body;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::quality::{DEFAULT_QUALITY, VALID_QUALITIES, VALID_TYPES};
@@ -65,16 +66,16 @@ pub async fn get_song_info(
         );
     }
 
-    let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(_permit) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return APIResponse::error("服务繁忙，请稍后重试", 503);
     };
-
-    state.stats.increment("parse");
 
     let music_id = extract_music_id(&song_id_str, &state.http_client).await;
     let cookies = state.cookie_store.parse().unwrap_or_default();
@@ -100,7 +101,5 @@ pub async fn get_song_info(
         _ => APIResponse::error("无效的类型参数", 400),
     };
 
-    state.stats.decrement("parse");
-    drop(permit);
     result
 }

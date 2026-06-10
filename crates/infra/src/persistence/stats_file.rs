@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tracing::warn;
 
-use netease_domain::port::stats_store::StatsStore;
+use netease_domain::port::stats_store::{StatsKind, StatsStore};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct StatsBucket {
@@ -109,24 +109,24 @@ impl FileStatsStore {
 }
 
 impl StatsStore for FileStatsStore {
-    fn increment(&self, kind: &str) {
+    fn increment(&self, kind: StatsKind) {
         let now = Local::now();
         let month_key = now.format("%Y-%m").to_string();
         let day_key = now.format("%Y-%m-%d").to_string();
 
         match kind {
-            "parse" => {
+            StatsKind::Parse => {
                 self.parse_current.fetch_add(1, Ordering::Relaxed);
             }
-            _ => {
+            StatsKind::Download => {
                 self.download_current.fetch_add(1, Ordering::Relaxed);
             }
         }
 
         if let Ok(mut data) = self.data.lock() {
             let bucket = match kind {
-                "parse" => &mut data.parse,
-                _ => &mut data.download,
+                StatsKind::Parse => &mut data.parse,
+                StatsKind::Download => &mut data.download,
             };
             bucket.total += 1;
             *bucket.monthly.entry(month_key).or_insert(0) += 1;
@@ -137,17 +137,14 @@ impl StatsStore for FileStatsStore {
         self.notify_sse();
     }
 
-    fn decrement(&self, kind: &str) {
-        if kind == "parse" {
-            let prev = self.parse_current.fetch_sub(1, Ordering::Relaxed);
-            if prev <= 0 {
-                self.parse_current.store(0, Ordering::Relaxed);
-            }
-        } else {
-            let prev = self.download_current.fetch_sub(1, Ordering::Relaxed);
-            if prev <= 0 {
-                self.download_current.store(0, Ordering::Relaxed);
-            }
+    fn decrement(&self, kind: StatsKind) {
+        let current = match kind {
+            StatsKind::Parse => &self.parse_current,
+            StatsKind::Download => &self.download_current,
+        };
+        let prev = current.fetch_sub(1, Ordering::Relaxed);
+        if prev <= 0 {
+            current.store(0, Ordering::Relaxed);
         }
         self.notify_sse();
     }

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::model::music_info::{DownloadUrl, MusicInfo};
 use crate::model::quality::Quality;
-use crate::model::song::extract_artists;
 use crate::port::music_api::MusicApi;
 use crate::service::song_service::{resolve_url_with_fallback, QualityFallbackConfig};
 use netease_kernel::error::AppError;
@@ -32,41 +31,30 @@ pub async fn get_music_info(
 
     let (url_data, actual_quality) = url_result?;
 
-    let detail_result = detail_result?;
-    let song_detail = detail_result
-        .pointer("/songs/0")
+    let detail = detail_result?;
+    let song = detail
+        .song()
         .ok_or_else(|| AppError::Download(format!("No detail for ID {music_id}")))?;
 
     let lyric_result = lyric_result.ok();
-    let artists = extract_artists(song_detail);
 
     Ok(MusicInfo {
         id: music_id.parse().unwrap_or(0),
-        name: song_detail
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("未知歌曲")
-            .to_string(),
-        artists,
-        album: song_detail
-            .pointer("/al/name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("未知专辑")
-            .to_string(),
-        pic_url: song_detail
-            .pointer("/al/picUrl")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        duration: song_detail
-            .get("dt")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-            / 1000,
-        track_number: song_detail
-            .get("no")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0) as i32,
+        // 空名兜底为「未知歌曲」(handle_json 走 SongMeta 原值, 故占位符留此处)
+        name: if song.name.is_empty() {
+            "未知歌曲".to_string()
+        } else {
+            song.name.clone()
+        },
+        artists: song.artists.clone(),
+        album: if song.album.is_empty() {
+            "未知专辑".to_string()
+        } else {
+            song.album.clone()
+        },
+        pic_url: song.pic_url.clone(),
+        duration: song.duration_ms / 1000,
+        track_number: song.track_number,
         download_url: DownloadUrl::new(url_data.url),
         file_type: url_data.file_type,
         file_size: url_data.size,

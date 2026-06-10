@@ -3,7 +3,7 @@
 
 use maud::{html, Markup};
 
-use super::components::{quality_options_short, song_item};
+use super::components::{quality_options_short, result_section, song_item};
 use super::model::AlbumVM;
 
 pub fn results(al: &AlbumVM) -> Markup {
@@ -39,10 +39,5 @@ pub fn error(msg: &str) -> Markup {
 }
 
 fn wrap(inner: &Markup) -> Markup {
-    html! {
-        div id="album-result" class="result-section fade-in" {
-            h3 { "专辑 · Album" }
-            (inner)
-        }
-    }
+    result_section("album-result", "专辑 · Album", inner)
 }

@@ -14,6 +14,7 @@ use axum::response::IntoResponse;
 use serde::Deserialize;
 
 use crate::web::extract::parse_body;
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::state::AppState;
 use crate::web::view;
 use crate::web::view::model::SongDetailVM;
@@ -60,15 +61,16 @@ pub async fn ui_song(
         ));
     }
 
-    let Ok(Ok(permit)) = tokio::time::timeout(
+    let Ok(_permit) = PermitGuard::acquire(
+        Arc::clone(&state.parse_semaphore),
+        Arc::clone(&state.stats),
+        StatsKind::Parse,
         std::time::Duration::from_secs(30),
-        state.parse_semaphore.acquire(),
     )
     .await
     else {
         return view::song::error("服务繁忙，请稍后重试");
     };
-    state.stats.increment("parse");
 
     let music_id = extract_music_id(&song_id_str, &state.http_client).await;
     let cookies = state.cookie_store.parse().unwrap_or_default();
@@ -82,7 +84,5 @@ pub async fn ui_song(
         Err(e) => view::song::error(&format!("API调用失败: {e}")),
     };
 
-    state.stats.decrement("parse");
-    drop(permit);
     markup
 }

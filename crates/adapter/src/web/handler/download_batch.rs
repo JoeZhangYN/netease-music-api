@@ -13,6 +13,7 @@ use axum::Json;
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
+use crate::web::helpers::{PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
@@ -68,7 +69,7 @@ pub async fn download_batch(
         .unwrap_or_else(|| DEFAULT_QUALITY.into());
 
     let rc_snapshot = state.runtime_config.load();
-    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
+    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot, Arc::clone(&state.in_flight));
     let fallback_cfg =
         netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
             &rc_snapshot,
@@ -88,27 +89,25 @@ pub async fn download_batch(
 
     let mut track_data: Vec<TrackData> = Vec::new();
     for mid in &unique_ids {
-        let parse_permit =
-            match tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire())
-                .await
-            {
-                Ok(Ok(p)) => Some(p),
-                _ => None,
-            };
-        if parse_permit.is_some() {
-            state.stats.increment("parse");
-        }
+        // 尽力而为：超时拿不到许可不报错、置 None 继续（PermitGuard 内已耦合
+        // stats increment；None 即未获取、不计数）。
+        let parse_guard = PermitGuard::acquire(
+            Arc::clone(&state.parse_semaphore),
+            Arc::clone(&state.stats),
+            StatsKind::Parse,
+            Duration::from_secs(30),
+        )
+        .await
+        .ok();
 
-        let download_permit =
-            match tokio::time::timeout(Duration::from_secs(60), state.download_semaphore.acquire())
-                .await
-            {
-                Ok(Ok(p)) => Some(p),
-                _ => None,
-            };
-        if download_permit.is_some() {
-            state.stats.increment("download");
-        }
+        let download_guard = PermitGuard::acquire(
+            Arc::clone(&state.download_semaphore),
+            Arc::clone(&state.stats),
+            StatsKind::Download,
+            Duration::from_secs(60),
+        )
+        .await
+        .ok();
 
         // PR-E: 下载侧 CDN 速率护栏（共享 limiter，host=cdn 与 API 域分桶）
         let cookies_snapshot = state.cookie_store.parse().unwrap_or_default();
@@ -133,14 +132,8 @@ pub async fn download_batch(
         )
         .await;
 
-        if download_permit.is_some() {
-            state.stats.decrement("download");
-        }
-        drop(download_permit);
-        if parse_permit.is_some() {
-            state.stats.decrement("parse");
-        }
-        drop(parse_permit);
+        drop(download_guard);
+        drop(parse_guard);
 
         match dl_result {
             Ok(result) if result.success => {
@@ -292,7 +285,7 @@ async fn batch_download_worker(
     let cookies = state.cookie_store.parse().unwrap_or_default();
     let client = &state.http_client;
     let rc_snapshot = state.runtime_config.load();
-    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot);
+    let dl_config = DownloadConfig::from_runtime_config(&rc_snapshot, Arc::clone(&state.in_flight));
     let fallback_cfg =
         netease_domain::service::song_service::QualityFallbackConfig::from_runtime_config(
             &rc_snapshot,
@@ -374,16 +367,19 @@ async fn batch_download_worker(
         let music_info = if let Some(info) = prefetched_info {
             info
         } else {
-            let Ok(Ok(parse_permit)) =
-                tokio::time::timeout(Duration::from_secs(30), state.parse_semaphore.acquire())
-                    .await
+            let Ok(parse_guard) = PermitGuard::acquire(
+                Arc::clone(&state.parse_semaphore),
+                Arc::clone(&state.stats),
+                StatsKind::Parse,
+                Duration::from_secs(30),
+            )
+            .await
             else {
                 error!("Batch: parse semaphore timeout for {}", music_id);
                 failed += 1;
                 progress_base += song_pct;
                 continue;
             };
-            state.stats.increment("parse");
 
             let result = download_service::get_music_info(
                 state.music_api.as_ref(),
@@ -394,9 +390,7 @@ async fn batch_download_worker(
                 &music_id,
             )
             .await;
-
-            state.stats.decrement("parse");
-            drop(parse_permit);
+            drop(parse_guard);
 
             match result {
                 Ok(info) => info,
@@ -432,15 +426,16 @@ async fn batch_download_worker(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 let mid = extract_music_id(&target_raw_id, &state_c.http_client).await;
-                let Ok(Ok(parse_permit)) = tokio::time::timeout(
+                let Ok(parse_guard) = PermitGuard::acquire(
+                    Arc::clone(&state_c.parse_semaphore),
+                    Arc::clone(&state_c.stats),
+                    StatsKind::Parse,
                     Duration::from_secs(30),
-                    state_c.parse_semaphore.acquire(),
                 )
                 .await
                 else {
                     return None;
                 };
-                state_c.stats.increment("parse");
                 let result = download_service::get_music_info(
                     state_c.music_api.as_ref(),
                     &mid,
@@ -450,8 +445,7 @@ async fn batch_download_worker(
                     &mid,
                 )
                 .await;
-                state_c.stats.decrement("parse");
-                drop(parse_permit);
+                drop(parse_guard);
                 result.ok().map(|info| (mid, info))
             })
         };
@@ -470,9 +464,13 @@ async fn batch_download_worker(
         }
 
         // --- Download phase ---
-        let Ok(Ok(permit)) =
-            tokio::time::timeout(Duration::from_secs(120), state.download_semaphore.acquire())
-                .await
+        let Ok(download_guard) = PermitGuard::acquire(
+            Arc::clone(&state.download_semaphore),
+            Arc::clone(&state.stats),
+            StatsKind::Download,
+            Duration::from_secs(120),
+        )
+        .await
         else {
             error!("Batch: download semaphore timeout for {}", music_id);
             failed += 1;
@@ -481,8 +479,6 @@ async fn batch_download_worker(
             progress_base += download_pct;
             continue;
         };
-
-        state.stats.increment("download");
 
         let file_path = build_file_path(&state.config.downloads_dir, &music_info, &quality);
 
@@ -502,8 +498,7 @@ async fn batch_download_worker(
                 cover_data,
             });
             completed += 1;
-            state.stats.decrement("download");
-            drop(permit);
+            drop(download_guard);
             progress_base += download_pct;
             continue;
         }
@@ -560,13 +555,13 @@ async fn batch_download_worker(
             music_info.file_size,
             dl_config.min_free_disk,
             dl_config.disk_guard_grace_secs,
+            &dl_config.in_flight,
         ) {
             error!("Batch: disk space check failed for {}: {}", music_id, e);
             failed += 1;
             half_triggered.store(true, Ordering::Relaxed);
             quarter_triggered.store(true, Ordering::Relaxed);
-            state.stats.decrement("download");
-            drop(permit);
+            drop(download_guard);
             progress_base += download_pct;
             continue;
         }
@@ -593,8 +588,7 @@ async fn batch_download_worker(
             .and_then(std::result::Result::ok)
             .flatten();
 
-        state.stats.decrement("download");
-        drop(permit);
+        drop(download_guard);
 
         match dl_result {
             Ok(Ok(())) => {

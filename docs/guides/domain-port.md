@@ -98,11 +98,15 @@ pub trait CookieStore: Send + Sync {
 统计数据存储抽象，同步 trait。
 
 ```rust
+// StatsKind enum（Copy）替代裸 &str key——typo 编译期即报。
+// as_str() 单源映射回内部 map key / 外部 JSON 字段名（"parse" | "download"）。
+pub enum StatsKind { Parse, Download }
+
 pub trait StatsStore: Send + Sync {
-    fn increment(&self, kind: &str);   // kind: "parse" | "download"
-    fn decrement(&self, kind: &str);   // 递减当前计数
-    fn get_all(&self) -> Value;        // 返回完整统计 JSON
-    fn flush(&self);                    // 持久化到磁盘
+    fn increment(&self, kind: StatsKind);  // 计数维度类型化
+    fn decrement(&self, kind: StatsKind);  // 递减当前计数
+    fn get_all(&self) -> Value;            // 返回完整统计 JSON（字段名不变）
+    fn flush(&self);                        // 持久化到磁盘
 }
 ```
 

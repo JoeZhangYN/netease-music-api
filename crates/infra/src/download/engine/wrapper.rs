@@ -51,6 +51,13 @@ pub async fn download_file_ranged(
     let part_path = part_path_for(file_path);
     let content_length = content_length_hint;
 
+    // 不变量 #8：登记 in-flight `.part`，让并发下载触发的 disk_guard 驱逐跳过本
+    // 路径。这是**内层（单次 attempt 粒度）**guard，覆盖本次下载+rename；Job 级
+    // guard 由 download_music_file / download_music_with_metadata 在更外层持有
+    // （batch handler 直接调本函数则本 guard 即为其 Job 粒度）。引用计数叠加，
+    // 故内层 Drop 不会在 Job 仍持有时注销——跨重试/刷新 .part 全程登记不断开。
+    let _attempt_guard = config.in_flight.register(part_path.clone());
+
     let result = if content_length > config.ranged_threshold {
         download_adaptive(
             dl,
@@ -128,11 +135,18 @@ pub async fn download_music_file(
         let _ = std::fs::remove_file(&file_path);
     }
 
+    // 不变量 #8 + Task #5（断点续传 FSM 硬约束）：Job 级 in-flight 登记，覆盖整个
+    // 下载执行——晚于缓存命中早返、早于 .part 创建，且未来加 Downloading⇄Refreshing
+    // 重取 URL 环（run_download_job）时本 guard 仍持有、跨 refresh 间隙不断开。
+    // 内层 download_file_ranged 再各持一把 attempt guard，引用计数叠加。
+    let _job_guard = config.in_flight.register(part_path_for(&file_path));
+
     crate::download::disk_guard::ensure_disk_space(
         downloads_dir,
         music_info.file_size,
         config.min_free_disk,
         config.disk_guard_grace_secs,
+        &config.in_flight,
     )?;
 
     // PR-F: download metrics — start timer，emit DownloadStarted/Completed/Failed
@@ -226,11 +240,15 @@ pub async fn download_music_with_metadata(
         let _ = std::fs::remove_file(&file_path);
     }
 
+    // 不变量 #8 + Task #5：Job 级 in-flight 登记（同 download_music_file 注释）。
+    let _job_guard = config.in_flight.register(part_path_for(&file_path));
+
     crate::download::disk_guard::ensure_disk_space(
         downloads_dir,
         music_info.file_size,
         config.min_free_disk,
         config.disk_guard_grace_secs,
+        &config.in_flight,
     )?;
 
     download_file_ranged(
