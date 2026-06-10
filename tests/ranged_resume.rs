@@ -265,16 +265,37 @@ async fn resume_skips_discontiguous_completed_chunks() {
     let client = make_client(ClientProfile::Download);
     let config = ranged_config(threads);
 
+    // PR-T3：捕获进度回调值，断言基线 = completed_bytes（含离散 chunk 2）而非
+    // contiguous_prefix（仅 chunk 0）。manifest 已完成 chunk 0+2 = 2000 字节，续传第一个
+    // 缺口 chunk（chunk 1，1000 字节）写完即首次回调——基线正确时首报 ≥ 2000+1000=3000；
+    // 旧 contiguous_prefix 基线 1000 时首报仅 2000（cosmetic 低估）。
+    let progress: Arc<std::sync::Mutex<Vec<u64>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let progress_cb: netease_infra::download::engine::ProgressCallback = {
+        let p = Arc::clone(&progress);
+        Arc::new(move |done, _total| p.lock().unwrap().push(done))
+    };
+
     download_file_ranged(
         &client,
         DownloadUrl::new(format!("{}/song.flac", server.uri())),
         &final_path,
         total as u64,
-        None,
+        Some(progress_cb),
         &config,
     )
     .await
     .expect("discontiguous resume should succeed");
+
+    // 进度基线断言：所有回调值 ≥ 3000（= completed_bytes 2000 基线 + 至少一个 1000 chunk）。
+    // 旧实现（contiguous_prefix 基线 1000）首报为 2000，本断言会失败——锁住基线修正。
+    let reported = progress.lock().unwrap().clone();
+    let min_reported = reported.iter().copied().min().unwrap_or(0);
+    assert!(
+        min_reported >= (chunk_len as u64 * 3),
+        "progress baseline must count discrete completed chunks (completed_bytes), \
+         min reported {min_reported} should be >= {} (2000 baseline + 1000 first gap chunk)",
+        chunk_len * 3
+    );
 
     let starts = seen.lock().unwrap().clone();
     let chunk2_start = chunk_len as u64 * 2; // 2000

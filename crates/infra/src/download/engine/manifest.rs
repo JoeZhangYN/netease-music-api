@@ -113,6 +113,24 @@ impl PartManifest {
         self.completed = merged;
     }
 
+    /// 所有已填区间的**总字节数**（含非连续前缀之后的离散已完成 chunk）。纯函数。
+    ///
+    /// 与 `contiguous_prefix` 的语义区别（PR-T3，别混淆两用途）：
+    /// - `contiguous_prefix` = **续传起点/字节语义**——`[0, prefix)` 连续已填的最大前缀，
+    ///   非连续前缀之后的离散 chunk **不计**（续传必须从连续前缀的第一个缺口开始）。
+    /// - `completed_bytes` = **进度语义**——已落盘的总字节，离散已完成 chunk **也计**
+    ///   （进度条反映真实已下载量，并发部分成功 / 续传场景下不低估）。
+    ///
+    /// 依赖 `completed` 规范形（升序、互不重叠，`record_chunk` 维护）：直接对每个闭区间
+    /// `[s, e]` 求 `e - s + 1` 求和即可，无需去重。
+    pub fn completed_bytes(&self) -> u64 {
+        self.completed
+            .iter()
+            .map(|&(s, e)| e - s + 1)
+            .sum::<u64>()
+            .min(self.content_length)
+    }
+
     /// `[0, prefix)` 全部已填的最大 `prefix`（续传起点）。纯函数。
     ///
     /// 依赖 `completed` 规范形（升序不重叠）：若首区间从 0 开始，prefix = 首区间 end + 1
@@ -250,6 +268,48 @@ mod tests {
             !m.is_range_complete(200, 300),
             "spanning a gap is not complete"
         );
+    }
+
+    // PR-T3 — completed_bytes 进度语义（含离散 chunk）三态覆盖。
+    #[test]
+    fn completed_bytes_empty_is_zero() {
+        assert_eq!(sample().completed_bytes(), 0);
+    }
+
+    #[test]
+    fn completed_bytes_contiguous_equals_prefix() {
+        let mut m = sample(); // content_length 1000
+        m.record_chunk(0, 255); // [0,255] = 256 字节
+        m.record_chunk(256, 511); // 相邻合并 [0,511] = 512 字节
+                                  // 连续前缀场景：completed_bytes == contiguous_prefix。
+        assert_eq!(m.completed_bytes(), 512);
+        assert_eq!(m.completed_bytes(), m.contiguous_prefix());
+    }
+
+    #[test]
+    fn completed_bytes_counts_discontiguous_chunks() {
+        let mut m = sample(); // content_length 1000
+        m.record_chunk(0, 255); // chunk 0 = 256 字节
+        m.record_chunk(512, 767); // chunk 2 = 256 字节（中间 [256,511] 缺）
+                                  // 进度语义：离散已完成 chunk 也计 → 512 字节。
+        assert_eq!(
+            m.completed_bytes(),
+            512,
+            "discrete chunks counted for progress"
+        );
+        // 续传语义：连续前缀只到第一个缺口 → 256（两用途必须区分）。
+        assert_eq!(
+            m.contiguous_prefix(),
+            256,
+            "contiguous_prefix must stay resume-start semantics"
+        );
+    }
+
+    #[test]
+    fn completed_bytes_clamps_to_content_length() {
+        let mut m = sample();
+        m.record_chunk(0, 999); // 全填 = 1000 字节 = content_length
+        assert_eq!(m.completed_bytes(), 1000);
     }
 
     #[test]

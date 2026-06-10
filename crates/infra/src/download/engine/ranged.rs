@@ -200,9 +200,10 @@ pub(super) async fn download_adaptive(
         // PR-R0：probe 首 chunk 也流式读 + per-next stall 超时（与 fetch_range 同原语）。
         let first_data = stream_body_with_stall(resp, config.stall_secs, "range probe").await?;
 
-        if let Some(ref cb) = on_progress {
-            cb(first_data.len() as u64, content_length);
-        }
+        // PR-T3：原此处的 `cb(first_data.len(), ..)` 早报已删——它只报本 chunk 字节、
+        // **不含续传基线**（续传场景下进度倒退/低估）。首 chunk 的进度由
+        // `download_remaining_and_pwrite` 写完该 chunk 后基于 `downloaded_total`
+        // （含 completed_bytes 基线）统一上报，单一进度来源不漂移。
 
         download_remaining_and_pwrite(
             client,
@@ -299,10 +300,14 @@ async fn download_remaining_and_pwrite(
     // 共享 manifest（多 chunk task 并发 record+persist 需互斥；persist 原子 temp+rename）。
     let manifest = Arc::new(Mutex::new(manifest));
 
-    // 进度基线 = manifest 已记录的连续前缀（续传时非 0）。
+    // 进度基线 = manifest 已记录的**总字节**（含离散已完成 chunk，PR-T3）。
+    // 用 `completed_bytes` 而非 `contiguous_prefix`——后者只算连续前缀，并发部分成功
+    // （chunk 0/2 完成、chunk 1 缺）续传时会低估进度（cosmetic，字节正确性不受影响）。
+    // 注：`contiguous_prefix` 在续传**起点判定**（resolve_resume / next_missing_range）处
+    // 的用途不变——那是字节续传语义，与此处进度语义正交。
     let initial_done = {
         let guard = manifest.lock().await;
-        guard.contiguous_prefix()
+        guard.completed_bytes()
     };
     let downloaded_total = Arc::new(std::sync::atomic::AtomicU64::new(initial_done));
 

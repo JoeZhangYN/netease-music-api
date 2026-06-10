@@ -82,6 +82,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   删除原 JS 的 `collectAdminConfig`/`validateAdminConfig` 重复。
 
 ### Fixed
+- **ranged 续传进度条基线低估（cosmetic，R3 遗留）** —— 两处进度基线漏算续传量：①
+  `download_remaining_and_pwrite` 基线原用 `PartManifest::contiguous_prefix()`（仅连续前缀），
+  并发部分成功（如 chunk 0/2 完成、chunk 1 缺）续传时**离散已完成 chunk 不计入**进度；②
+  probe 206 路径有一处早报 `cb(first_data.len(), ..)` 只报本 chunk 字节、**完全不含续传基线**
+  （续传时进度倒退）。修复：新增纯函数 `PartManifest::completed_bytes()`（规范形 completed 区间
+  总字节求和），ranged 进度基线改用它；删除 probe 的早报（首 chunk 进度由
+  `download_remaining_and_pwrite` 基于含基线的 `downloaded_total` 单一来源上报，不漂移）。
+  `contiguous_prefix()` 在续传**起点判定**处的用途不变（字节续传语义 ≠ 进度语义，两用途区分；
+  均不影响字节正确性）。manifest 单测覆盖空/连续/离散/clamp 四态 + `tests/ranged_resume.rs`
+  进度回调断言（离散场景 min 报告 ≥ completed_bytes 基线）锁死。
 - **download_async 超时文案假承诺 → 续传落地后成真** —— 原「已下载部分保留为 .part，重试将复用」
   与代码漂移（旧实现重试 truncate 重写、不复用）。v3 中段先改如实「请重试（将重新完整下载）」；
   断点续传（PR-R1~R5）落地后文案改回「已下载部分保留，重试将从断点续传」并由 resume regression 锁死
