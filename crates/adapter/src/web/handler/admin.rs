@@ -14,7 +14,6 @@ use tracing::{info, warn};
 
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
-use netease_domain::model::quality::Quality;
 use netease_infra::auth::password;
 use netease_infra::auth::token;
 use netease_kernel::observability::LogEvent;
@@ -224,73 +223,13 @@ pub(crate) fn token_ok(headers: &HeaderMap, state: &AppState) -> bool {
         .is_some_and(|t| !t.is_empty() && token::validate_token(t, &state.admin_secret).is_ok())
 }
 
-/// PR-10 — public schema of `RuntimeConfig` numeric bounds.
-/// Returned by `GET /admin/config/schema` so the frontend can render
-/// sliders dynamically instead of duplicating min/max/default values
-/// across HTML, JS validator, and Rust validate(). Source of truth
-/// for the bounds is `RuntimeConfig::validate()` itself; this endpoint
-/// surfaces them for clients.
-///
-/// Pre-PR-10 the slider min/max/value were triplicated:
-///   - HTML attrs (templates/index.html slider section)
-///   - JS validator (validateAdminConfig)
-///   - Rust validate() (kernel/runtime_config.rs)
-///
-/// Drift was already detected (JS dropped 3 upper bounds; cover_cache
-/// TTL unit mismatch). Frontend migration to consume this endpoint
-/// is a separate v3 follow-up; the endpoint is non-breaking and
-/// available for use immediately.
-pub async fn admin_get_config_schema(
-    State(_state): State<Arc<AppState>>,
-) -> (StatusCode, Json<APIResponse>) {
-    let schema = json!({
-        "fields": [
-            { "name": "parse_concurrency",                "min": 1,           "max": 50,          "default": 5,             "unit": null     },
-            { "name": "download_concurrency",             "min": 1,           "max": 20,          "default": 2,             "unit": null     },
-            { "name": "batch_concurrency",                "min": 1,           "max": 5,           "default": 1,             "unit": null     },
-            { "name": "ranged_threshold",                 "min": 1_048_576,     "max": null,        "default": 5_242_880,       "unit": "bytes"  },
-            { "name": "ranged_threads",                   "min": 1,           "max": 32,          "default": 8,             "unit": null     },
-            { "name": "max_retries",                      "min": 1,           "max": 20,          "default": 5,             "unit": null     },
-            { "name": "download_cleanup_interval_secs",   "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
-            { "name": "download_cleanup_max_age_secs",    "min": 60,          "max": null,        "default": 43200,         "unit": "secs"   },
-            { "name": "task_ttl_secs",                    "min": 60,          "max": null,        "default": 1800,          "unit": "secs"   },
-            { "name": "zip_max_age_secs",                 "min": 60,          "max": null,        "default": 3600,          "unit": "secs"   },
-            { "name": "task_cleanup_interval_secs",       "min": 5,           "max": null,        "default": 60,            "unit": "secs"   },
-            { "name": "cover_cache_ttl_secs",             "min": 60,          "max": null,        "default": 600,           "unit": "secs"   },
-            { "name": "cover_cache_max_size",             "min": 1,           "max": 500,         "default": 50,            "unit": null     },
-            { "name": "batch_max_songs",                  "min": 1,           "max": 500,         "default": 100,           "unit": null     },
-            { "name": "min_free_disk",                    "min": 104_857_600,   "max": null,        "default": 524_288_000,     "unit": "bytes"  },
-            { "name": "download_timeout_per_song_secs",   "min": 10,          "max": null,        "default": 300,           "unit": "secs"   },
-            { "name": "disk_guard_grace_secs",            "min": 60,          "max": null,        "default": 300,           "unit": "secs"   },
-            { "name": "rate_limit_rps_per_user",          "min": 0,           "max": 1000,        "default": 10,            "unit": "req/s"  },
-            { "name": "rate_limit_burst",                 "min": 0,           "max": 10000,       "default": 20,            "unit": null     },
-            { "name": "quality_fallback_enabled",         "min": null,        "max": null,        "default": true,          "unit": "bool"   },
-            { "name": "quality_fallback_floor",           "min": null,        "max": null,        "default": "standard",    "unit": "quality"},
-            { "name": "resume_enabled",                   "min": null,        "max": null,        "default": true,          "unit": "bool"   },
-            { "name": "url_refresh_budget",               "min": 0,           "max": 10,          "default": 2,             "unit": null     },
-            { "name": "stall_secs",                       "min": 5,           "max": 600,         "default": 30,            "unit": "secs"   }
-        ]
-    });
-    APIResponse::success(schema, "ok")
-}
-
-/// PR-10 — public list of supported audio qualities, derived from the
-/// `Quality` enum (PR-4 SOT). Replaces the hand-listed array in
-/// `info.rs` (which had drifted to 7-of-8 missing `dolby` until PR-4).
-/// Frontend can fetch this on startup to populate `<select>` options
-/// without hand-coding them in HTML.
-pub async fn admin_get_qualities() -> (StatusCode, Json<APIResponse>) {
-    let qualities: Vec<serde_json::Value> = Quality::ALL
-        .iter()
-        .map(|q| {
-            json!({
-                "value": q.wire_str(),
-                "display_name": q.display_name_zh(),
-            })
-        })
-        .collect();
-    APIResponse::success(json!({ "qualities": qualities }), "ok")
-}
+// PR-10 引入的 `GET /admin/config/schema` + `GET /admin/qualities` 两端点本欲给前端做
+// slider 边界 / 音质列表的 SOT，但前端迁 Maud SSR 后**零消费者**（视图直接在进程内消费
+// `RuntimeConfig::validate()` 的 `bounds` 常量 / `Quality::ALL`），且 schema 端点的
+// default/bound 已与 `RuntimeConfig::default` 实际漂移——孤岛必漂活样本。v4 拆桥砍除二者，
+// 不变量 #9 边界单源回归 `kernel::runtime_config::bounds`（视图一致性反退化锁
+// `tests/admin_config_ui_coverage.rs`）；#10 音质单源回归 `Quality::ALL`（视图 `quality_select`
+// + `/api/info` 两 live consumer + `tests/admin_config_ui_coverage.rs` 锁）。
 
 fn resize_semaphore(sem: &Semaphore, cap: &AtomicUsize, new_cap: usize) {
     let old_cap = cap.swap(new_cap, Ordering::SeqCst);

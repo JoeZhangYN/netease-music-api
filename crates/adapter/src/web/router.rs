@@ -126,12 +126,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/admin/config",
             get(handler::admin::admin_get_config).put(handler::admin::admin_put_config),
         )
-        // PR-10: schema endpoints — let frontend fetch field bounds /
-        // quality variants instead of hand-coding them in HTML.
-        .route(
-            "/admin/config/schema",
-            get(handler::admin::admin_get_config_schema),
-        )
-        .route("/admin/qualities", get(handler::admin::admin_get_qualities))
+        // PR-10 的 /admin/config/schema + /admin/qualities 已拆桥砍除（v4）——零消费者孤岛
+        // 端点，slider 边界单源回归 kernel::runtime_config::bounds（不变量 #9）、音质列表单源
+        // 回归 Quality::ALL（不变量 #10），视图直接进程内消费，无需 HTTP 端点中转。
         .with_state(state)
 }

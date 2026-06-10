@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `DownloadOutcome` 必填字段 contract test（`domain/model/download.rs` 内联 +
     `tests/contract_download_link.rs`，随 `fail()` 删除移除 fail 用例）。`domain/model/download.rs`
     的 test-gate 豁免（「PR-7 重构 DownloadOutcome 时移除」）随重构兑现删除。
+- **不变量 #9 承载失真修复：admin 配置边界单源回归 + 孤岛端点拆桥** —— 上一条「admin 补齐 8
+  控件」entry 的对账发现（schema 端点零消费者 + 视图硬编码边界）本轮落地：
+  - **边界单源上移 `bounds` 常量**：`kernel::runtime_config` 新增 `Bound { min, max: Option<u64> }`
+    + `bounds` 模块（每可调数值字段一条 `Bound` 常量，raw 单位）。`RuntimeConfig::validate()` 全部
+    数值边界改为消费 `bounds::*`（21 个字段；行为/错误文案逐字节不变，`tests/runtime_config_validate.rs`
+    28 测试全绿见证）。边界数字从此只此一处定义。
+  - **`GET /admin/config/schema` + `GET /admin/qualities` 拆桥砍除**（router 删路由 + handler 删 fn
+    + 删 `Quality` import）：两端点 PR-10 本欲做前端 slider 边界 / 音质列表 SOT，但前端迁 Maud SSR 后
+    **零消费者**（视图直接进程内消费 `bounds` 常量 / `Quality::ALL`），且 schema 端点 default 已实际漂移
+    （`ranged_threads` 8≠4、`cover_cache_ttl` 600≠3600、`cover_cache_max_size` 50≠200）——「孤岛必漂」
+    活样本（铁律 1b：无 live consumer 的抽象 = 贫血孤岛）。砍 vs 留依据：README/docs 均未把二者文档化为
+    公开 API（仅 `/admin/config` GET/PUT 是契约），纯 admin 内部端点零引用 → 拆桥不留旧路径。
+  - **视图边界反退化锁**：`tests/admin_config_ui_coverage.rs::slider_bounds_stay_within_validate`
+    消费同一 `bounds::*` 常量，断言每个数值 slider 的 [min,max] 换算回 raw 后 ⊆ 对应 `Bound`（双侧硬界
+    须完整覆盖合法域、仅下界字段 slider 上界为纯 UI 档位不约束）。视图硬编码边界从此与 validate 同源不漂
+    （UI 单位换算逻辑 bytes→MB / secs→分时保留不变）。形态取舍：未采「常量同时驱动 validate + 视图渲染」
+    （3 字段如 `download_cleanup_max_age` 的 UI slider 故意用更粗单位 + 更紧下界，与 validate raw 下界不等，
+    强行共享单常量会逼 validate 改行为或产生非法 slider 下界）——故 validate 持硬边界 SOT、视图持 UI 档位、
+    反退化锁证两者一致（subset），是契合此处的最小单源形态。
+  - **顺带修正陈旧文档**：`references/shared.md` 的 `RuntimeConfig` 片段从 16 字段重写为全 24 字段
+    （含 PR-B/R4/R0 字段 + 修正 schema 端点同款 default 漂移注释）。
 - **不变量 #5 真正落地：PermitGuard 全量迁移 + 机械拆桥** —— PR-9 造了 RAII helper 但 13 个
   handler 全部仍手动 `stats.increment/decrement + drop(permit)` 配对（panic 路径漏 decrement）。
   本轮 13 个 handler（JSON + ui/）全迁 `PermitGuard::acquire`；`AppState` 三信号量字段
@@ -68,10 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **反退化锁**：`crates/adapter/tests/admin_config_ui_coverage.rs` 做「`RuntimeConfig` 字段数
     vs 控件数」机械对账（serde key 全集 vs `FIELD_TO_CONTROL` 登记 + `config_view` 渲染含 `name=`
     双锁）——新增字段漏 UI 即 `cargo test` 期红（防再次静默漏 UI）。
-  - **对账发现（未修，留待后续）**：`GET /admin/config/schema`（不变量 #9 声称的 slider 边界 SOT）
-    自前端迁 Maud SSR 后已成**孤岛**——无任何消费者，现有 slider 边界硬编码在 Maud 视图（UI 单位），
-    真正强制 SOT 是 `RuntimeConfig::validate()`。本任务沿既有 SSR 模式（不引入新机制），bounds-SOT
-    统一属独立 epic。
+  - **对账发现（已于上方「不变量 #9 承载失真修复」entry 落地）**：`GET /admin/config/schema`
+    （不变量 #9 旧声称的 slider 边界 SOT）自前端迁 Maud SSR 后已成**孤岛**——无任何消费者，slider 边界
+    硬编码在 Maud 视图（UI 单位），真正强制 SOT 是 `RuntimeConfig::validate()`。bounds-SOT 统一已作为
+    独立 epic 完成（边界上移 `bounds` 常量 + 孤岛端点拆桥 + 视图边界反退化锁）。
 - **断点续传 DownloadJob FSM 落地（PR-R1~R5，施工图 `.claude/plans/download-resume-fsm.md`）** ——
   下载中途失败不再整文件重来；链接过期自动 refresh 续传。不变量 #1/#8/#20/#22/#23（CLAUDE.md SOT）。
   - **R1 纯类型层**：`ResumeState` enum FSM（`Downloading⇄Refreshing` 环 + 穷尽 match 反退化）+
@@ -103,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `HttpFailureKind::Stalled`（`is_url_refreshable=true`/`is_retryable=false`）→ FSM 主动转 refresh
     换新链接续传，受 `url_refresh_budget` 约束（#23 不被击穿），非无限等到外层 300s 超时。判定基于
     **字节进展**而非整体耗时（慢但有进展不触发）。`stall_secs` 走 `RuntimeConfig`（validate 5..=600，
-    默认 30）→ `DownloadConfig`（#11）→ `/admin/config/schema` slider（#9），admin 面板实时可调。
+    默认 30）→ `DownloadConfig`（#11）→ admin config slider（边界单源 `bounds::STALL_SECS`，#9），admin 面板实时可调。
     regression `tests/stall_watchdog.rs`（raw-TCP 中途挂死 + tracing 捕获 emit + budget 上界）。
   - regression：`tests/{ranged_resume,refresh_resume,stall_watchdog}.rs` + `engine_regression.rs::single_stream_resumes_from_part_len`。
 - **前端从 jQuery 静态页迁移到 Maud SSR + htmx 区域局部重载（纯 Rust 编排）** —— 原
