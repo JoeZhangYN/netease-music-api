@@ -11,6 +11,9 @@ impl DownloadUrl {
         Self(url)
     }
 
+    /// 生产路径无 caller；root `tests/`（contract_download_link C-2 持有期无副作用 +
+    /// property_tests wrapper 透明性）消费——契约测试覆盖面 API，勿当死代码删
+    /// （2026-06-10 tech-debt 扫描误判孤岛，编译器证伪）。
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

@@ -34,7 +34,7 @@ implicit_clone = "warn"
 inefficient_to_string = "warn"
 iter_overeager_cloned = "warn"
 large_enum_variant = "warn"
-let_underscore_must_use = "allow"  # 28 处 fire-and-forget cleanup（fs::create_dir_all/remove_file/rate_limiter::acquire 等）。Result/Future 自身 #[must_use]，`let _: T = expr` 类型注解仍触发——逐个就近 #[allow] 跟 global 无语义区别。后续可抽 `kernel::ignore_io<T>(_: io::Result<T>)` helper 单源 #[allow]，目前保留。
+let_underscore_must_use = "allow"  # 28 处 fire-and-forget cleanup（fs::create_dir_all/remove_file/rate_limiter::acquire 等）。Result/Future 自身 #[must_use]，`let _: T = expr` 类型注解仍触发——逐个就近 #[allow] 跟 global 无语义区别。后续可抽 `kernel::ignore_io<T>(_: io::Result<T>)` helper 单源 #[allow]，目前保留。2026-06-10 tech-debt 扫描复评：43 处语义极简、helper 收益低于改写成本，裁定维持暂缓（勿重复召回）。
 manual_assert = "warn"
 manual_inspect = "warn"
 manual_let_else = "warn"
