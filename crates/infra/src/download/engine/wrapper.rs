@@ -25,8 +25,7 @@ use netease_domain::service::download_service;
 use netease_kernel::error::AppError;
 use netease_kernel::observability::LogEvent;
 
-use super::ranged::download_adaptive;
-use super::single_stream::download_single_stream;
+use super::job::run_download_job;
 use super::{download_client, part_path_for, sidecar_path_for, DownloadConfig, ProgressCallback};
 use crate::download::tags::write_music_tags_async;
 
@@ -58,19 +57,10 @@ pub async fn download_file_ranged(
     // 故内层 Drop 不会在 Job 仍持有时注销——跨重试/刷新 .part 全程登记不断开。
     let _attempt_guard = config.in_flight.register(part_path.clone());
 
-    let result = if content_length > config.ranged_threshold {
-        download_adaptive(
-            dl,
-            url,
-            &part_path,
-            content_length,
-            on_progress.clone(),
-            config,
-        )
-        .await
-    } else {
-        download_single_stream(dl, url, &part_path, content_length, on_progress, config).await
-    };
+    // PR-R4: FSM driver（方案 A）。refresh 循环内嵌于此——`_attempt_guard` 天然横跨
+    // 整个 Job（含 refresh 周期），plan §3.2 约束自动满足，无需上移登记点。
+    // resume_enabled=false / refresher=None → driver 内部退化为单次尝试（现状）。
+    let result = run_download_job(dl, url, &part_path, content_length, on_progress, config).await;
 
     match result {
         Ok(()) => {

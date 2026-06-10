@@ -36,6 +36,15 @@ pub struct RuntimeConfig {
     pub quality_fallback_enabled: bool,
     /// 降级最低品质（不会降到此以下）。default = "standard"。
     pub quality_fallback_floor: String,
+
+    // PR-R4 — 断点续传 + URL refresh。
+    /// 是否启用断点续传 FSM（链接过期 → refresh 续传）。false = 走现状路径
+    /// （单次尝试，失败整文件重来）——给用户兜底逃生口。default = true。
+    pub resume_enabled: bool,
+    /// 单个下载 Job 允许的 URL refresh 次数上界（与 per-attempt 网络重试正交，
+    /// plan §5.3）。总 CDN/refresh 请求 ≤ (url_refresh_budget + 1) × max_attempts。
+    /// 保守默认 2，防 refresh × retry 相乘放大风控。default = 2。
+    pub url_refresh_budget: u32,
 }
 
 impl Default for RuntimeConfig {
@@ -71,6 +80,9 @@ impl Default for RuntimeConfig {
             rate_limit_burst: 20,
             quality_fallback_enabled: true,
             quality_fallback_floor: "standard".into(),
+
+            resume_enabled: true,
+            url_refresh_budget: 2,
         }
     }
 }
@@ -163,6 +175,11 @@ impl RuntimeConfig {
         ];
         if !VALID_QUALITIES.contains(&self.quality_fallback_floor.as_str()) {
             return Err("quality_fallback_floor must be a valid Quality wire string".into());
+        }
+        // url_refresh_budget 上界 10：与 max_attempts 相乘约束总请求（plan §5.3）。
+        // 0 合法 = 续字节但不 refresh url（链接过期即整 Job 失败，等同关 refresh）。
+        if self.url_refresh_budget > 10 {
+            return Err("url_refresh_budget must be 0..=10".into());
         }
         Ok(())
     }

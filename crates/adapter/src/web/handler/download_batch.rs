@@ -13,7 +13,7 @@ use axum::Json;
 use serde::Deserialize;
 use tracing::{error, info, warn};
 
-use crate::web::helpers::{PermitGuard, StatsKind};
+use crate::web::helpers::{build_url_refresher, PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
@@ -566,6 +566,12 @@ async fn batch_download_worker(
             continue;
         }
 
+        // PR-R4: per-song refresher——clone config（Arc 字段 clone 便宜）替换 refresher，
+        // pin 到本首实际生效 quality（#14）。链接过期时 driver 取同 quality 新 URL 续传。
+        let song_dl_config = DownloadConfig {
+            refresher: Some(build_url_refresher(&state, &music_info, &cookies, &task_id)),
+            ..dl_config.clone()
+        };
         let dl_result = tokio::time::timeout(
             Duration::from_secs(download_timeout),
             download_file_ranged(
@@ -574,7 +580,7 @@ async fn batch_download_worker(
                 &file_path,
                 music_info.file_size,
                 Some(progress_cb),
-                &dl_config,
+                &song_dl_config,
             ),
         )
         .await;

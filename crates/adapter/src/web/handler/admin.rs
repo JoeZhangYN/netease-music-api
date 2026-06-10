@@ -265,7 +265,9 @@ pub async fn admin_get_config_schema(
             { "name": "rate_limit_rps_per_user",          "min": 0,           "max": 1000,        "default": 10,            "unit": "req/s"  },
             { "name": "rate_limit_burst",                 "min": 0,           "max": 10000,       "default": 20,            "unit": null     },
             { "name": "quality_fallback_enabled",         "min": null,        "max": null,        "default": true,          "unit": "bool"   },
-            { "name": "quality_fallback_floor",           "min": null,        "max": null,        "default": "standard",    "unit": "quality"}
+            { "name": "quality_fallback_floor",           "min": null,        "max": null,        "default": "standard",    "unit": "quality"},
+            { "name": "resume_enabled",                   "min": null,        "max": null,        "default": true,          "unit": "bool"   },
+            { "name": "url_refresh_budget",               "min": 0,           "max": 10,          "default": 2,             "unit": null     }
         ]
     });
     APIResponse::success(schema, "ok")

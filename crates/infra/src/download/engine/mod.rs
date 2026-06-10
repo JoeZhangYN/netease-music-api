@@ -16,6 +16,7 @@ use std::sync::{Arc, OnceLock};
 
 use reqwest::Client;
 
+use netease_domain::port::url_refresher::UrlRefresher;
 use netease_kernel::runtime_config::RuntimeConfig;
 
 use crate::download::in_flight::InFlightRegistry;
@@ -34,7 +35,7 @@ pub use wrapper::{download_file_ranged, download_music_file, download_music_with
 // `crate::http::DEFAULT_BACKOFF`，single_stream/ranged 通过 `with_retry`
 // 消费。引用 RETRY_DELAYS_MS 的代码在 PR-C 全部迁移到 `RetryPolicy`。
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DownloadConfig {
     pub ranged_threshold: u64,
     pub ranged_threads: usize,
@@ -46,6 +47,33 @@ pub struct DownloadConfig {
     /// 存于 `AppState`，按 Arc 克隆注入每个 `DownloadConfig`——所有克隆共享同
     /// 一份集合。`Default`/测试构造独立空 registry（无 disk_guard 协调）。
     pub in_flight: Arc<InFlightRegistry>,
+
+    // PR-R4 — 断点续传 + URL refresh（方案 X：经 DownloadConfig 注入）。
+    /// 是否启用断点续传 FSM。false → driver 退化为单次尝试（现状 R2/R3 行为）。
+    pub resume_enabled: bool,
+    /// 单 Job 的 URL refresh 次数上界（与 per-attempt 网络重试正交，plan §5.3）。
+    pub url_refresh_budget: u32,
+    /// per-song refresher（链接过期时取新 URL 续传）。`None` → 不 refresh（即便
+    /// resume_enabled 也只续字节、链接过期即失败）。调用方（handler/worker）按
+    /// 每首歌构造并 `clone` config 替换此字段；`from_runtime_config` 默认 `None`。
+    pub refresher: Option<Arc<dyn UrlRefresher>>,
+}
+
+// `Arc<dyn UrlRefresher>` 无 Debug；手写 Debug 把它显示为 present/absent 占位
+// （URL 相关内容不入日志，AP-004）。
+impl std::fmt::Debug for DownloadConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DownloadConfig")
+            .field("ranged_threshold", &self.ranged_threshold)
+            .field("ranged_threads", &self.ranged_threads)
+            .field("max_retries", &self.max_retries)
+            .field("min_free_disk", &self.min_free_disk)
+            .field("disk_guard_grace_secs", &self.disk_guard_grace_secs)
+            .field("resume_enabled", &self.resume_enabled)
+            .field("url_refresh_budget", &self.url_refresh_budget)
+            .field("refresher", &self.refresher.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for DownloadConfig {
@@ -57,6 +85,9 @@ impl Default for DownloadConfig {
             min_free_disk: 500 * 1024 * 1024,
             disk_guard_grace_secs: 300,
             in_flight: Arc::new(InFlightRegistry::new()),
+            resume_enabled: true,
+            url_refresh_budget: 2,
+            refresher: None,
         }
     }
 }
@@ -69,7 +100,10 @@ impl DownloadConfig {
     ///
     /// `in_flight` 不来自 `RuntimeConfig`——它是跨下载共享的进程级运行时状态，
     /// 由调用方（handler）从 `AppState` Arc 克隆传入，保证所有下载共享一份。
-    /// 仍为 `const fn`：移动 Arc 入参到 struct 是 const 兼容操作（无堆分配/无 drop）。
+    /// 仍为 `const fn`：移动 Arc 入参到 struct + `None` 字面量是 const 兼容操作。
+    ///
+    /// `refresher` 默认 `None`——它是 per-song 的（绑定 song_id/quality/cookies），
+    /// 由调用方（handler/worker）逐首构造后 `clone` config 替换此字段（方案 X）。
     pub const fn from_runtime_config(rc: &RuntimeConfig, in_flight: Arc<InFlightRegistry>) -> Self {
         Self {
             ranged_threshold: rc.ranged_threshold,
@@ -78,6 +112,9 @@ impl DownloadConfig {
             min_free_disk: rc.min_free_disk,
             disk_guard_grace_secs: rc.disk_guard_grace_secs,
             in_flight,
+            resume_enabled: rc.resume_enabled,
+            url_refresh_budget: rc.url_refresh_budget,
+            refresher: None,
         }
     }
 }

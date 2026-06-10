@@ -29,6 +29,17 @@ use super::manifest::PartManifest;
 use super::single_stream::{download_single_stream, stream_response_to_file};
 use super::{sidecar_path_for, DownloadConfig, ProgressCallback};
 
+/// PR-R4: 本地 IO / 组装失败归为非 refreshable 的 `Network` kind。
+///
+/// driver 只对 `is_url_refreshable()=true`（403/404/410/AuthExpired）转 refresh；
+/// 本地失败（磁盘/seek/join/short-read 组装）换链接无解，归 `Network`——其
+/// `is_url_refreshable()=false` 表达「不刷新」。per-attempt 瞬态重试已在 `with_retry`
+/// 内耗尽，故归 `Network` 后 driver 直接失败出，不会无限循环（driver 不循环非
+/// refreshable 错）。消息原样保留在 `Network(String)` 内，最终映回 `AppError::Download`。
+fn io_fatal(e: &AppError) -> HttpFailureKind {
+    HttpFailureKind::Network(e.to_string())
+}
+
 // PR-K2: probe + chunk fetch 的 RetryPolicy 构造统一走 SOT 单源
 // `RetryPolicy::for_profile_with_max_retries(config.max_retries, Download)`，
 // admin 面板 max_retries 修改实时生效（应急止血 / 高 CDN 抖动场景缓冲）。
@@ -106,7 +117,7 @@ pub(super) async fn download_adaptive(
     content_length: u64,
     on_progress: Option<ProgressCallback>,
     config: &DownloadConfig,
-) -> Result<(), AppError> {
+) -> Result<(), HttpFailureKind> {
     let ranged_threads = config.ranged_threads;
     let chunk_size = content_length / ranged_threads as u64;
     let grid = chunk_grid(content_length, ranged_threads);
@@ -116,13 +127,13 @@ pub(super) async fn download_adaptive(
 
     // 已填满（重启后 manifest 显示完整）→ 无需任何网络请求，直接落地。
     if manifest.is_complete() {
-        return verify_assembled_size(file_path, content_length);
+        return verify_assembled_size(file_path, content_length).map_err(|e| io_fatal(&e));
     }
 
     // 第一个待下载 chunk = 网格中第一个未被 manifest 完整覆盖者。probe 即从它开始。
     let Some(first_idx) = first_missing_chunk_index(&grid, &manifest) else {
         // grid 与 manifest 不一致的兜底（理论不达：is_complete 已早返）→ 全量校验。
-        return verify_assembled_size(file_path, content_length);
+        return verify_assembled_size(file_path, content_length).map_err(|e| io_fatal(&e));
     };
     let first = grid[first_idx];
 
@@ -157,10 +168,10 @@ pub(super) async fn download_adaptive(
     let resp = match probe_result {
         Ok(r) => r,
         Err(kind) if !kind.is_retryable() => {
-            // 永久错（4xx / AuthExpired）不 fallback：上层应让用户重新 fetch URL 或换 quality
-            return Err(AppError::Download(format!(
-                "Range probe permanent error: {kind}"
-            )));
+            // 永久错（4xx / AuthExpired）：PR-R4 直接 propagate **typed** kind，让 driver
+            // 按 `is_url_refreshable()` 决策——403/404/410/AuthExpired → refresh 续传，
+            // 非链接 4xx → 失败。不 fallback single_stream（避免对 4xx 的「Range 不支持」误判）。
+            return Err(kind);
         }
         Err(_) => {
             // retry 全部 attempt 后仍 transient 失败 → fallback 到 single_stream
@@ -186,7 +197,7 @@ pub(super) async fn download_adaptive(
         let first_data = resp
             .bytes()
             .await
-            .map_err(|e| AppError::Download(format!("Read first chunk: {e}")))?
+            .map_err(|e| HttpFailureKind::from_reqwest(&e))?
             .to_vec();
 
         if let Some(ref cb) = on_progress {
@@ -208,10 +219,13 @@ pub(super) async fn download_adaptive(
             config,
         )
         .await
+        .map_err(|e| io_fatal(&e))
     } else if status == 200 || status == 203 {
         // 服务端不支持 Range → 全量 stream（不续传）。清掉 sidecar 避免 stale。
         let _ = std::fs::remove_file(&sidecar_path);
-        stream_response_to_file(resp, file_path, content_length, on_progress).await
+        stream_response_to_file(resp, file_path, content_length, on_progress)
+            .await
+            .map_err(|e| io_fatal(&e))
     } else {
         let _ = std::fs::remove_file(&sidecar_path);
         download_single_stream(client, url, file_path, content_length, on_progress, config).await

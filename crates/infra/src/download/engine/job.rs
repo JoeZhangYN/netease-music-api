@@ -14,14 +14,24 @@
 //! 计数归位（plan §1.3）：`refreshes_used` 与预算判定由 driver（PR-R4）持有并累加；
 //! 本 FSM 只负责转换合法性（铁律 2 双向归位：机械计数留 driver，转换合法性留类型）。
 //!
-//! 本文件 R1 阶段无 wiring（plan §9 PR-R1 行：纯新增），driver（`run_download_job`）
-//! 在 PR-R4 接入后移除下方 allow。
+//! **PR-R4 接线**：`run_download_job` 是 FSM driver——`download_file_ranged` 内嵌它
+//! （方案 A），复用现有 `InFlightGuard` 横跨整个 refresh 循环（plan §3.2）。driver 持有
+//! `refreshes_used` 计数 + 预算判定（机械计数留 driver），FSM 只判转换合法性（铁律 2）。
 
-// PR-R4 接线后移除（见 plan §9）：R1 纯类型层，FSM 尚无 driver 消费，私有项暂不可达。
-#![allow(dead_code)]
+use std::path::Path;
+
+use reqwest::Client;
+use tracing::{info, warn};
 
 use netease_domain::model::download::DownloadError;
+use netease_domain::model::music_info::DownloadUrl;
 use netease_kernel::error::AppError;
+use netease_kernel::observability::LogEvent;
+
+use super::ranged::download_adaptive;
+use super::single_stream::download_single_stream;
+use super::{sidecar_path_for, DownloadConfig, ProgressCallback};
+use crate::http::HttpFailureKind;
 
 /// 续传 Job 的离散状态。穷尽 match 保证加状态时编译器 catch 每个决策点（plan §1.2）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +107,190 @@ impl ResumeState {
     /// 是否终态（Assembled / Failed）。穷举所有变体（plan §2.1）。
     const fn is_terminal(&self) -> bool {
         matches!(self, ResumeState::Assembled | ResumeState::Failed(_))
+    }
+}
+
+/// 一次下载尝试（plan §2.4 `download_attempt_from` 原语）：按阈值分派 ranged /
+/// single_stream，**续传起点由被调函数内部从 `.part`/manifest 自行读取**（R2/R3），
+/// driver 不显式传 offset。返 `HttpFailureKind` 供 driver 按 `is_url_refreshable` 决策。
+async fn attempt_once(
+    client: &Client,
+    url: &str,
+    part_path: &Path,
+    content_length: u64,
+    on_progress: Option<ProgressCallback>,
+    config: &DownloadConfig,
+) -> Result<(), HttpFailureKind> {
+    if content_length > config.ranged_threshold {
+        download_adaptive(client, url, part_path, content_length, on_progress, config).await
+    } else {
+        download_single_stream(client, url, part_path, content_length, on_progress, config).await
+    }
+}
+
+/// `.part` 当前字节数（best-effort，仅供 FSM `written` 记账 + 日志；真续传起点由
+/// 被调下载函数从盘上读，driver 不依赖此值的精确性）。读失败 → 0。
+fn current_part_len(part_path: &Path) -> u64 {
+    std::fs::metadata(part_path).map_or(0, |m| m.len())
+}
+
+/// 丢弃 `.part` + sidecar（#14 SizeMismatch / 全量重来）。容错忽略缺失。
+fn discard_part(part_path: &Path) {
+    // destructive-audit: exempt — PR-R4 #14：refresh 取到不同 size，旧 .part 字节
+    // 与新 quality 不符，必须丢弃全量重下（plan §6 #14 / §10 否决 4）。
+    let _ = std::fs::remove_file(part_path);
+    let _ = std::fs::remove_file(sidecar_path_for(part_path));
+}
+
+/// PR-R4 FSM driver（方案 A，内嵌 `download_file_ranged`）。
+///
+/// 编排 `Downloading ⇄ Refreshing` 环：一次 attempt 链接级失效（`is_url_refreshable`）
+/// → 有界 refresh 取新 URL → 续传（被调函数从 `.part` 续）。per-attempt 网络重试仍在
+/// `attempt_once` 内的 `with_retry`（#17/#21），driver 只在其**之上**处理链接级失效，
+/// 两层正交不重叠（plan §3.1 / §5.3）。
+///
+/// 总请求上界（plan §5.3）：refresh ≤ `url_refresh_budget`，故总 CDN/refresh 请求
+/// ≤ `(url_refresh_budget + 1) × max_attempts`——driver 不复制退避数学，只数 refresh。
+///
+/// `refresher == None` 或 `resume_enabled == false`：退化为单次 `attempt_once`（现状
+/// R2/R3 行为，链接过期即失败）——这是用户面兜底逃生口。
+pub(super) async fn run_download_job(
+    client: &Client,
+    initial_url: &str,
+    part_path: &Path,
+    content_length: u64,
+    on_progress: Option<ProgressCallback>,
+    config: &DownloadConfig,
+) -> Result<(), AppError> {
+    // 退化路径：未启用续传 FSM 或无 refresher → 单次尝试（现状）。
+    // `let-else` 绑定 refresher，否则走退化分支返回——避免 `expect` on Option。
+    let Some(refresher) = config.refresher.as_ref().filter(|_| config.resume_enabled) else {
+        return attempt_once(
+            client,
+            initial_url,
+            part_path,
+            content_length,
+            on_progress,
+            config,
+        )
+        .await
+        .map_err(|kind| AppError::Download(kind.to_string()));
+    };
+    let budget = config.url_refresh_budget;
+
+    // 当前生效 URL（refresh 后替换）。初始来自上层 MusicInfo。
+    let mut current_url = DownloadUrl::new(initial_url.to_string());
+    let mut refreshes_used: u32 = 0;
+
+    // FSM：Init → Ready{0} → Downloading → (Assembled | Refreshing 环 | Failed)。
+    let resume_from = current_part_len(part_path);
+    let mut st = ResumeState::Init.advance(ResumeEvent::UrlObtained { resume_from })?;
+
+    loop {
+        // 进入下载：仅 `Ready` 需 `EnterDownload`（→ Downloading）；refresh 成功后
+        // `RefreshSucceeded` 已直接到 `Downloading`（plan §1.3），不可再 EnterDownload
+        // （`Downloading + EnterDownload` 是非法转换）。故只在 Ready 时显式进入。
+        if matches!(st, ResumeState::Ready { .. }) {
+            st = st.advance(ResumeEvent::EnterDownload)?;
+        }
+
+        let attempt = attempt_once(
+            client,
+            current_url.as_str(),
+            part_path,
+            content_length,
+            on_progress.clone(),
+            config,
+        )
+        .await;
+
+        st = match attempt {
+            Ok(()) => st.advance(ResumeEvent::AttemptCompleted)?,
+            Err(kind) if kind.is_url_refreshable() => {
+                let written = current_part_len(part_path);
+                st.advance(ResumeEvent::AttemptUrlExpired { written })?
+            }
+            Err(kind) => {
+                // 致命/非链接错 → 快速失败（不 refresh，保 #20）。
+                st.advance(ResumeEvent::AttemptFatal(kind_to_download_error(&kind)))?
+            }
+        };
+
+        // 处理 Refreshing 环（driver 持有 budget 计数）。
+        if matches!(st, ResumeState::Refreshing { .. }) {
+            if refreshes_used >= budget {
+                info!(
+                    event = %LogEvent::DownloadFailed,
+                    refreshes_used,
+                    budget,
+                    "url refresh budget exhausted"
+                );
+                st = st.advance(ResumeEvent::RefreshBudgetExhausted)?;
+            } else {
+                refreshes_used += 1;
+                match refresher.refresh().await {
+                    Ok(refreshed) => {
+                        // #14 完整性：新 URL 报告 size 必须与期望一致，否则字节错位损坏。
+                        if refreshed.file_size != content_length {
+                            warn!(
+                                refreshed_size = refreshed.file_size,
+                                expected = content_length,
+                                "refresh size mismatch — discarding .part for full restart"
+                            );
+                            discard_part(part_path);
+                            st = st.advance(ResumeEvent::SizeMismatch)?;
+                        } else {
+                            current_url = refreshed.url;
+                            let written = current_part_len(part_path);
+                            info!(
+                                event = %LogEvent::UrlRefreshed,
+                                refreshes_used,
+                                resume_from = written,
+                                "url refreshed — resuming"
+                            );
+                            st = st.advance(ResumeEvent::RefreshSucceeded {
+                                resume_from: written,
+                            })?;
+                        }
+                    }
+                    Err(e) => {
+                        // refresh 自身失败（API 错）→ 致命，不再续。
+                        st = st.advance(ResumeEvent::AttemptFatal(DownloadError::Other(
+                            format!("url refresh failed: {e}"),
+                        )))?;
+                    }
+                }
+            }
+        }
+
+        if st.is_terminal() {
+            break;
+        }
+    }
+
+    match st {
+        ResumeState::Assembled => Ok(()),
+        ResumeState::Failed(e) => Err(AppError::from(e)),
+        // 非终态退出循环不可能（上面 is_terminal break）；穷举兜底防御（非 wildcard，
+        // 加状态时编译器 catch 此处）。
+        st @ (ResumeState::Init
+        | ResumeState::Ready { .. }
+        | ResumeState::Downloading { .. }
+        | ResumeState::Refreshing { .. }) => Err(AppError::InvalidTransition(format!(
+            "job loop exited in non-terminal state {st:?}"
+        ))),
+    }
+}
+
+/// `HttpFailureKind` → `DownloadError`（FSM `Failed` 载体）。致命/非链接错的分类映射。
+fn kind_to_download_error(kind: &HttpFailureKind) -> DownloadError {
+    match kind {
+        HttpFailureKind::AuthExpired => DownloadError::UrlExpired { status: 401 },
+        HttpFailureKind::Permanent4xx { status } => DownloadError::UrlExpired { status: *status },
+        HttpFailureKind::Server5xx { status } => DownloadError::UrlExpired { status: *status },
+        HttpFailureKind::Timeout => DownloadError::Timeout { secs: 0 },
+        HttpFailureKind::Quota { .. } => DownloadError::Other("rate limited".into()),
+        HttpFailureKind::Network(s) => DownloadError::Network(s.clone()),
     }
 }
 

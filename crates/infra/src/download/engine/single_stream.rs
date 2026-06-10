@@ -52,6 +52,10 @@ pub(super) fn resume_offset_single_stream(part_path: &Path) -> std::io::Result<u
 // PR-K2: 接 `&DownloadConfig` 让 `RetryPolicy` 真消费 config.max_retries（admin
 // 面板 max_retries=1 应急止血 / =15 高 CDN 抖动场景实时生效）。RetryPolicy 构造
 // 统一走 SOT 单源 `RetryPolicy::for_profile_with_max_retries` (policy.rs)。
+// PR-R4: 返 `HttpFailureKind`（非 `AppError`）让 FSM driver 按 `is_url_refreshable()`
+// 决策——403/404/410/AuthExpired → refresh 续传。原 `AppError::Download(kind.to_string())`
+// 把 typed kind 字符串化，driver 无法识别链接级失效。`download_file_ranged` 边界再映回
+// `AppError`（公开签名不变）。
 pub(super) async fn download_single_stream(
     client: &Client,
     url: &str,
@@ -59,30 +63,29 @@ pub(super) async fn download_single_stream(
     content_length: u64,
     on_progress: Option<ProgressCallback>,
     config: &DownloadConfig,
-) -> Result<(), AppError> {
+) -> Result<(), HttpFailureKind> {
     let policy =
         RetryPolicy::for_profile_with_max_retries(config.max_retries, ClientProfile::Download);
 
     with_retry(&policy, || async {
-        download_stream_once(client, url, file_path, content_length, &on_progress)
-            .await
-            .map_err(classify)
+        download_stream_once(client, url, file_path, content_length, &on_progress).await
     })
     .await
-    .map_err(|kind| AppError::Download(kind.to_string()))
 }
 
+/// 返 `HttpFailureKind`：HTTP 状态经 `from_response` 分类（链接级 4xx → Permanent4xx /
+/// AuthExpired，供 driver refresh 判定）；本地 IO 错经 `classify` 归瞬态。
 async fn download_stream_once(
     client: &Client,
     url: &str,
     file_path: &Path,
     content_length: u64,
     on_progress: &Option<ProgressCallback>,
-) -> Result<(), AppError> {
+) -> Result<(), HttpFailureKind> {
     // PR-R2: 每次 attempt 重新读 `.part` 长度——retry-after-partial 时从已写处续，
     // 不重下已落盘字节。offset 在闭包内读保证 with_retry 多 attempt 各自看到最新长度。
     let resume_from = resume_offset_single_stream(file_path)
-        .map_err(|e| AppError::Download(format!("Read .part length failed: {e}")))?;
+        .map_err(|e| classify(AppError::Download(format!("Read .part length failed: {e}"))))?;
 
     // N>=expected → `.part` 已达完整长度，视为完成，让上层 rename + size 校验把关。
     // 仅当 expected 已知（>0）才判定；expected==0（未知大小）禁用续传，全量重下。
@@ -106,15 +109,17 @@ async fn download_stream_once(
     let resp = req
         .send()
         .await
-        .map_err(|e| AppError::Download(format!("Download request failed: {e}")))?;
+        .map_err(|e| HttpFailureKind::from_reqwest(&e))?;
 
     // PR-5: reqwest does NOT error on HTTP 4xx/5xx — guard explicitly.
+    // PR-R4: 非 2xx/206 经 `from_response` typed 分类——403/404/410 → Permanent4xx
+    // （driver refresh），5xx → Server5xx（with_retry 重试），401/-301 → AuthExpired。
     let status = resp.status();
     if !status.is_success() && status.as_u16() != 206 {
-        return Err(AppError::Download(format!(
-            "HTTP {} from server",
-            status.as_u16()
-        )));
+        let body_peek = resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+        let peek = &body_peek[..body_peek.len().min(200)];
+        return Err(HttpFailureKind::from_response(status, peek)
+            .unwrap_or_else(|| HttpFailureKind::Network(format!("HTTP {status} from server"))));
     }
 
     // PR-R2: 续传请求期望 206。服务器返 200（不支持 Range）→ 一次性降级：
@@ -134,6 +139,7 @@ async fn download_stream_once(
         "",
     )
     .await
+    .map_err(classify)
 }
 
 pub(super) async fn stream_response_to_file(

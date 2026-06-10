@@ -236,6 +236,18 @@ fn quality_fallback_floor_must_be_valid_quality() {
     assert!(c.validate().is_ok());
 }
 
+#[test]
+fn url_refresh_budget_bounds() {
+    let mut c = RuntimeConfig::default();
+    // 0 合法（续字节不 refresh url）
+    c.url_refresh_budget = 0;
+    assert!(c.validate().is_ok(), "url_refresh_budget=0 must be Ok");
+    c.url_refresh_budget = 10;
+    assert!(c.validate().is_ok(), "url_refresh_budget=10 must be Ok");
+    c.url_refresh_budget = 11;
+    assert!(c.validate().is_err(), "url_refresh_budget=11 must be Err");
+}
+
 // ---------- 序列化 round-trip：load_or_default 不丢字段 ----------
 
 #[test]
@@ -262,6 +274,8 @@ fn json_round_trip_preserves_all_fields() {
         rate_limit_burst: 30,
         quality_fallback_enabled: false,
         quality_fallback_floor: "lossless".into(),
+        resume_enabled: false,
+        url_refresh_budget: 3,
     };
 
     let json = serde_json::to_string(&cfg).unwrap();
@@ -288,6 +302,8 @@ fn json_round_trip_preserves_all_fields() {
     assert_eq!(parsed.rate_limit_burst, 30);
     assert!(!parsed.quality_fallback_enabled);
     assert_eq!(parsed.quality_fallback_floor, "lossless");
+    assert!(!parsed.resume_enabled);
+    assert_eq!(parsed.url_refresh_budget, 3);
 
     parsed.validate().expect("round-trip 后仍合法");
 }
@@ -386,6 +402,8 @@ proptest! {
             rate_limit_burst: effective_burst,
             quality_fallback_enabled: true,
             quality_fallback_floor: "standard".into(),
+            resume_enabled: true,
+            url_refresh_budget: 2,
         };
         prop_assert!(cfg.validate().is_ok());
     }

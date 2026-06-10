@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
-use crate::web::helpers::{PermitGuard, StatsKind};
+use crate::web::helpers::{build_url_refresher, PermitGuard, StatsKind};
 use crate::web::response::APIResponse;
 use crate::web::state::AppState;
 use netease_domain::model::download::TaskStage;
@@ -399,10 +399,11 @@ async fn do_single_download(
 
     let (dl_config, dl_timeout_secs) = {
         let rc = state.runtime_config.load();
-        (
-            DownloadConfig::from_runtime_config(&rc, Arc::clone(&state.in_flight)),
-            rc.download_timeout_per_song_secs,
-        )
+        // PR-R4: per-song refresher pin 到**实际生效** quality（music_info.quality，
+        // #14——非 requested），链接过期时取同 quality 新 URL 续传。
+        let mut cfg = DownloadConfig::from_runtime_config(&rc, Arc::clone(&state.in_flight));
+        cfg.refresher = Some(build_url_refresher(state, &music_info, &cookies, task_id));
+        (cfg, rc.download_timeout_per_song_secs)
     };
 
     // PR-3: outer timeout — single-song download must fail fast instead of
@@ -426,9 +427,10 @@ async fn do_single_download(
         Ok(Ok(r)) => r,
         Ok(Err(e)) => return Err(e.to_string()),
         Err(_) => {
-            // 注意：现实现重试不复用 .part（ranged 路径 truncate 重写）——
-            // 断点续传复用是 v4 FSM 的事（.claude/plans/download-resume-fsm.md），落地前文案不许诺。
-            let msg = format!("下载超时（{dl_timeout_secs}秒）。请重试（将重新完整下载）。");
+            // PR-R4：断点续传 FSM 已落地——超时留下的 `.part` + sidecar manifest 在
+            // 重试时被复用（single_stream 按 `.part` 长度续 / ranged 按 manifest 跳已填
+            // chunk），文案据此成真。复用前提：resume_enabled=true（默认）。
+            let msg = format!("下载超时（{dl_timeout_secs}秒）。已下载部分保留，重试将从断点续传。");
             state.task_store.update(
                 task_id,
                 Box::new(move |t| {
